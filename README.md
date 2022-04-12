@@ -1,2 +1,2 @@
 # Aquamarine
-The Repository Contains the Model Architectures for Detection
+The repository contains the model architectures for object detection
