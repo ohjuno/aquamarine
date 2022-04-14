@@ -5,6 +5,9 @@ import os.path
 import torch
 
 from torchvision.datasets import VisionDataset
+from torch.utils.data import DataLoader
+
+from aquamarine.datasets.coco.functional import coco_collate_fn
 
 
 class COCODetection(VisionDataset):
@@ -40,6 +43,7 @@ class COCODetection(VisionDataset):
         bboxes[:, 2:] += bboxes[:, :2]
         bboxes[:, 0::2].clamp_(min=0, max=image.size[0])
         bboxes[:, 1::2].clamp_(min=0, max=image.size[1])
+
         labels = [annotation['category_id'] for annotation in annotations]
         labels = torch.tensor(labels, dtype=torch.float32)
 
@@ -63,45 +67,51 @@ class COCODetection(VisionDataset):
         return len(self.ids)
 
 
-def collate_fn(batch):
-    batch = list(zip(*batch))
-    batch[0] = collate_inputs_from_inputs_list(batch[0])
-    return tuple(batch)
+class COCODataLoader(DataLoader):
+
+    def __init__(self, dataset, batch_size: int = 1,
+                 shuffle: bool = False, sampler=None,
+                 batch_sampler=None,
+                 num_workers: int = 0, collate_fn=coco_collate_fn,
+                 pin_memory: bool = False, drop_last: bool = False,
+                 timeout: float = 0, worker_init_fn=None,
+                 multiprocessing_context=None, generator=None,
+                 *, prefetch_factor: int = 2,
+                 persistent_workers: bool = False):
+        super(COCODataLoader, self).__init__(
+            dataset=dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            sampler=sampler,
+            batch_sampler=batch_sampler,
+            num_workers=num_workers,
+            collate_fn=collate_fn,
+            pin_memory=pin_memory,
+            drop_last=drop_last,
+            timeout=timeout,
+            worker_init_fn=worker_init_fn,
+            multiprocessing_context=multiprocessing_context,
+            generator=generator,
+            prefetch_factor=prefetch_factor,
+            persistent_workers=persistent_workers
+        )
 
 
-def collate_inputs_from_inputs_list(tensors):
-    max_size = max_by_axis([list(image.shape) for image in tensors])
-    batch_shape = [len(tensors)] + max_size
-    dtype = tensors[0].dtype
-    device = tensors[0].device
-    paddings = torch.zeros(batch_shape, dtype=dtype, device=device)
-    for image, padding in zip(tensors, paddings):
-        padding[: image.shape[0], : image.shape[1], : image.shape[2]].copy_(image)
-    return paddings
-
-
-def max_by_axis(l):
-    maxes = l[0]
-    for sublist in l[1:]:
-        for idx, item in enumerate(sublist):
-            maxes[idx] = max(maxes[idx], item)
-    return maxes
-
-
-if __name__ == '__main__':
-    from torch.utils.data import DataLoader
-    from torchvision.transforms import transforms
-
-    coco_transform = transforms.Compose([
-        transforms.ToTensor(),
-    ])
-    coco_trainset = COCODetection(
-        root='/mnt/datasets/coco/train2017',
-        annFile='/mnt/datasets/coco/annotations/instances_train2017.json',
-        transform=coco_transform,
-    )
-    coco_trainloader = DataLoader(coco_trainset, batch_size=4, shuffle=True, collate_fn=collate_fn, num_workers=0)
-
-    for idx, batch in enumerate(coco_trainloader):
-        inputs, targets = batch
-        breakpoint()
+# if __name__ == '__main__':
+#     import torchvision.transforms as T
+#     import aquamarine.datasets.utils as utils
+#     from torch.utils.data import DataLoader
+#
+#     coco_transform = T.Compose([
+#         T.ToTensor(),
+#     ])
+#     coco_trainset = COCODetection(
+#         root='/mnt/datasets/coco/train2017',
+#         annFile='/mnt/datasets/coco/annotations/instances_train2017.json',
+#         transform=coco_transform,
+#     )
+#     coco_trainloader = COCODataLoader(coco_trainset, batch_size=4, shuffle=True)
+#
+#     for idx, batch in enumerate(coco_trainloader):
+#         utils.visualize_bounding_boxes_on_batch(batch)
+#         breakpoint()
