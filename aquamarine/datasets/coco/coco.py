@@ -95,23 +95,3 @@ class COCODataLoader(DataLoader):
             prefetch_factor=prefetch_factor,
             persistent_workers=persistent_workers
         )
-
-
-# if __name__ == '__main__':
-#     import torchvision.transforms as T
-#     import aquamarine.datasets.utils as utils
-#     from torch.utils.data import DataLoader
-#
-#     coco_transform = T.Compose([
-#         T.ToTensor(),
-#     ])
-#     coco_trainset = COCODetection(
-#         root='/mnt/datasets/coco/train2017',
-#         annFile='/mnt/datasets/coco/annotations/instances_train2017.json',
-#         transform=coco_transform,
-#     )
-#     coco_trainloader = COCODataLoader(coco_trainset, batch_size=4, shuffle=True)
-#
-#     for idx, batch in enumerate(coco_trainloader):
-#         utils.visualize_bounding_boxes_on_batch(batch)
-#         breakpoint()
