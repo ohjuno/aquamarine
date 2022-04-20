@@ -1,13 +1,3 @@
-from aquamarine.models.common.transformer.layers import *
-from aquamarine.models.common.transformer.positional_encoding import PESinusoidal, PELearned
-from aquamarine.models.common.transformer.transformer import Transformer
+from aquamarine.models.common.transformer.layers import FeedForward, MultiHeadAttention
 
-__all__ = [
-    'TransformerEncoder',
-    'TransformerDecoder',
-    'TransformerEncoderLayer',
-    'TransformerDecoderLayer',
-    'PESinusoidal',
-    'PELearned',
-    'Transformer',
-]
+__all__ = ['FeedForward', 'MultiHeadAttention']
