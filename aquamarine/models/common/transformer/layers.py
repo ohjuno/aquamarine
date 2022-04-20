@@ -4,6 +4,13 @@ import torch.nn as nn
 
 from einops import rearrange
 
+__all__ = [
+    'TransformerEncoder',
+    'TransformerDecoder',
+    'TransformerEncoderLayer',
+    'TransformerDecoderLayer',
+]
+
 
 def _get_clones(obj, n):
     return nn.ModuleList([copy.deepcopy(obj) for _ in range(n)])
@@ -24,9 +31,8 @@ class MultiHeadAttention(nn.Module):
         super(MultiHeadAttention, self).__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-        self.dropout = dropout
         self.softmax = nn.Softmax(dim=-1)
-        self.dropout = nn.Dropout(self.dropout)
+        self.dropout = nn.Dropout(dropout)
         self.project = nn.Linear(self.embed_dim, self.embed_dim)
 
     def forward(self, q, k, v):
@@ -49,15 +55,12 @@ class FeedForward(nn.Module):
             dropout: float = 0.1,
     ):
         super(FeedForward, self).__init__()
-        self.dim = dim
-        self.dim_feedforward = dim_feedforward
-        self.dropout = dropout
         self.feedforward = nn.Sequential(
-            nn.Linear(self.dim, self.dim_feedforward),
+            nn.Linear(dim, dim_feedforward),
             nn.GELU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.dim_feedforward, self.dim),
-            nn.Dropout(self.dropout),
+            nn.Dropout(dropout),
+            nn.Linear(dim_feedforward, dim),
+            nn.Dropout(dropout),
         )
 
     def forward(self, x):
@@ -151,13 +154,11 @@ class TransformerDecoder(nn.Module):
             decoder_layer: nn.Module,
             num_layers: int,
             norm: nn.Module = None,
-            return_intermediate: bool = False,
     ):
         super(TransformerDecoder, self).__init__()
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
-        self.return_intermediate = return_intermediate
 
     def forward(
             self,
@@ -166,7 +167,6 @@ class TransformerDecoder(nn.Module):
             pos=None,
             query_pos=None,
     ):
-        intermediate = []
         for layer in self.layers:
             x = layer(
                 x,
@@ -174,13 +174,6 @@ class TransformerDecoder(nn.Module):
                 pos,
                 query_pos,
             )
-            if self.return_intermediate:
-                intermediate.append(self.norm(x))
         if self.norm is not None:
             x = self.norm(x)
-            if self.return_intermediate:
-                intermediate.pop()
-                intermediate.append(x)
-        if self.return_intermediate:
-            return torch.stack(intermediate)
-        return x.unsqueeze(0)
+        return x
