@@ -21,7 +21,7 @@ class DETR(nn.Module):
 
         embed_dim = self.transformer.embed_dim
         self.conv = nn.Conv2d(in_features, embed_dim, kernel_size=1, stride=1, bias=False)
-        self.pos = nn.Embedding(num_queries, embed_dim).weight.unsqueeze(0)
+        self.pos = nn.Embedding(2500, embed_dim).weight.unsqueeze(0)
         self.query_pos = nn.Embedding(num_queries, embed_dim).weight.unsqueeze(0)
         self.mlp_class = nn.Linear(embed_dim, self.num_classes + 1)
         self.mlp_boxes = nn.Linear(embed_dim, 4)
