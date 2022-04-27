@@ -11,6 +11,7 @@ class DETR(nn.Module):
             transformer: nn.Module,
             num_classes: int,
             num_queries: int,
+            in_features: int = 512,
     ):
         super(DETR, self).__init__()
         self.backbone = backbone
@@ -19,7 +20,8 @@ class DETR(nn.Module):
         self.num_queries = num_queries
 
         embed_dim = self.transformer.embed_dim
-        self.conv = nn.Conv2d(512, embed_dim, kernel_size=1, stride=1, bias=False)
+        self.conv = nn.Conv2d(in_features, embed_dim, kernel_size=1, stride=1, bias=False)
+        self.pos = nn.Embedding(num_queries, embed_dim).weight.unsqueeze(0)
         self.query_pos = nn.Embedding(num_queries, embed_dim).weight.unsqueeze(0)
         self.mlp_class = nn.Linear(embed_dim, self.num_classes + 1)
         self.mlp_boxes = nn.Linear(embed_dim, 4)
@@ -28,7 +30,8 @@ class DETR(nn.Module):
         x = self.backbone(x)
         x = self.conv(x)
         x = rearrange(x, 'b d h w -> b (h w) d')
-        x = self.transformer(x, None, self.query_pos)
-        c = self.mlp_class(x)
-        b = self.mlp_boxes(x).sigmoid()
-        return {'labels': c, 'bboxes': b}
+        b, n, d = x.shape
+        pos = self.pos[:, :n, :].repeat(b, 1, 1)
+        query_pos = self.query_pos.repeat(b, 1, 1)
+        x = self.transformer(x, pos, query_pos)
+        return {'labels': self.mlp_class(x), 'bboxes': self.mlp_boxes(x).sigmoid()}
