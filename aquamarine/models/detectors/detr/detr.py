@@ -32,18 +32,3 @@ class DETR(nn.Module):
         c = self.mlp_class(x)
         b = self.mlp_boxes(x).sigmoid()
         return {'labels': c, 'bboxes': b}
-
-
-if __name__ == '__main__':
-    import torch
-    import torchvision.models as models
-    from aquamarine.models.detectors.detr import DETRTransformer
-
-    images = torch.rand((4, 3, 224, 224))
-    resnet = nn.Sequential(*list(models.resnet18().children()))[:-2]
-    detector = DETRTransformer(512, 8, 2048, 6, 6)
-
-    detr = DETR(resnet, detector, 20, 100)
-    outputs = detr(images)
-
-    breakpoint()
