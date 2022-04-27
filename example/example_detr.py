@@ -10,6 +10,6 @@ if __name__ == '__main__':
     detector = DETRTransformer(512, 8, 2048, 6, 6)
     model = DETR(backbone, detector, 20, 100)
 
-    dummies = torch.rand((4, 3, 224, 224))
+    dummies = torch.rand((4, 3, 1600, 1600))
     outputs = model(dummies)
     breakpoint()
