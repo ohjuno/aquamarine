@@ -39,6 +39,7 @@ def main():
     criterion = HungarianLoss(num_classes=100, matcher=matcher, eos_coef=0.1)
     criterion.to(device)
 
+    # training loop
     for epoch in range(epochs):
         train(trainloader, model, optimizer, criterion, device, epoch, epochs)
 
