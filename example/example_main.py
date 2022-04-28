@@ -11,12 +11,9 @@ from aquamarine.datasets.coco import COCODetection, COCODataLoader
 from aquamarine.models import DETR, DETRTransformer, HungarianMatcher
 from aquamarine.modules import HungarianLoss
 
+# configuration
 root = '/mnt/datasets/coco/train2017'
 annFile = '/mnt/datasets/coco/annotations/instances_train2017.json'
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-])
 batch_size = 100
 device = 'cuda:0'
 epochs = 100
@@ -24,6 +21,10 @@ epochs = 100
 
 def main():
     # dataloader
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ])
     trainset = COCODetection(root=root, annFile=annFile, transform=transform)
     trainloader = COCODataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=0)
 
