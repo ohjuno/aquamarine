@@ -43,8 +43,7 @@ class DETRTransformer(nn.Module):
             if 1 < p.dim():
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, x, pos: Optional[torch.Tensor], query_pos: torch.Tensor):
-        query_pos = query_pos.repeat(x.shape[0], 1, 1)
+    def forward(self, x, pos: Optional[torch.Tensor], query_pos: Optional[torch.Tensor]):
         encoder_memory = self.encoder(x, pos)
         object_queries = torch.zeros_like(query_pos)
         return self.decoder(object_queries, encoder_memory, pos, query_pos)
