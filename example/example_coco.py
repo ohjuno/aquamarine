@@ -1,6 +1,7 @@
 import torchvision.transforms as transforms
 
 from aquamarine.datasets.coco import COCODetection, COCODataLoader
+from aquamarine.datasets.utils import visualize_bounding_boxes_on_batch
 
 # configurations
 root = '/mnt/datasets/coco/train2017'
@@ -14,6 +15,7 @@ if __name__ == '__main__':
 
     # get single batch
     inputs, targets = next(iter(trainloader))
+    visualize_bounding_boxes_on_batch((inputs, targets))
 
     # make training loop
     # for idx, batch in enumerate(trainloader):

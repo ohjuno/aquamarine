@@ -1,4 +1,4 @@
-from aquamarine.modules.losses import HungarianLoss, HungarianMatcher
+from aquamarine.modules.losses import HungarianLoss
 
 
-__all__ = ['HungarianLoss', 'HungarianMatcher']
+__all__ = ['HungarianLoss']

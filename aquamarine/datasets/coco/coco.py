@@ -49,7 +49,7 @@ class COCODetection(VisionDataset):
 
         cond = (bboxes[:, 0] < bboxes[:, 2]) & (bboxes[:, 1] < bboxes[:, 3])
         target = {
-            'image_id': id,
+            'image_id': torch.tensor([id]),
             'labels': labels[cond],
             'bboxes': bboxes[cond],
             'area': torch.tensor([annotation['area'] for annotation in annotations])[cond],
