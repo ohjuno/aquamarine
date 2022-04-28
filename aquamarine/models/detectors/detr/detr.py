@@ -31,7 +31,7 @@ class DETR(nn.Module):
         x = self.conv(x)
         x = rearrange(x, 'b d h w -> b (h w) d')
         b, n, d = x.shape
-        pos = self.pos[:, :n, :].repeat(b, 1, 1)
-        query_pos = self.query_pos.repeat(b, 1, 1)
+        pos = self.pos[:, :n, :].repeat(b, 1, 1).to(x.device)
+        query_pos = self.query_pos.repeat(b, 1, 1).to(x.device)
         x = self.transformer(x, pos, query_pos)
         return {'labels': self.mlp_class(x), 'bboxes': self.mlp_boxes(x).sigmoid()}
