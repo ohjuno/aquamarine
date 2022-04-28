@@ -69,13 +69,13 @@ def train(
         loss.backward()
         optimizer.step()
         print(
-            f'Epoch[{epoch:{len(str(epochs))}d}/{epochs}] - '
-            f'batch[{idx:{len(str(len(dataloader)))}d}/{len(dataloader)}] - '
+            f'Epoch[{epoch + 1:{len(str(epochs))}d}/{epochs}] - '
+            f'batch[{idx + 1:{len(str(len(dataloader)))}d}/{len(dataloader)}] - '
             f'loss: {loss.item():.3f}'
         )
     print(
-        f'Epoch[{epoch:{len(str(epochs))}d}/{epochs}] - '
-        f'average loss: {np.nanmean(losses)}'
+        f'Epoch[{epoch + 1:{len(str(epochs))}d}/{epochs}] - '
+        f'average loss: {np.nanmean(losses):.3f}'
     )
 
 
