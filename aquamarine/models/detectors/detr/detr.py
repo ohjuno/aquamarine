@@ -11,7 +11,7 @@ class DETR(nn.Module):
             transformer: nn.Module,
             num_classes: int,
             num_queries: int,
-            in_features: int = 512,
+            in_features: int = 2048,
     ):
         super(DETR, self).__init__()
         self.backbone = backbone

@@ -9,6 +9,8 @@ from torch.utils.data import DataLoader
 
 from aquamarine.datasets.coco.functional import coco_collate_fn
 
+torch.multiprocessing.set_sharing_strategy('file_system')
+
 
 class COCODetection(VisionDataset):
 

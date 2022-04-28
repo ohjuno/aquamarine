@@ -11,12 +11,37 @@ from aquamarine.datasets.coco import COCODetection, COCODataLoader
 from aquamarine.models import DETR, DETRTransformer, HungarianMatcher
 from aquamarine.modules import HungarianLoss
 
-# configuration
-root = '/mnt/datasets/coco/train2017'
-annFile = '/mnt/datasets/coco/annotations/instances_train2017.json'
-batch_size = 100
-device = 'cuda:0'
-epochs = 100
+
+args = {
+    # configuration - dataloader
+    'root': '/mnt/datasets/coco/train2017',
+    'annFile': '/mnt/datasets/coco/annotations/instances_train2017.json',
+    'batch_size': 32,
+    'num_worker': 20,  # set 0 when debugging
+    # configuration - experiment
+    'device': 'cuda:0',
+    'epochs': 100,
+    # configuration - model
+    # DETRTransformer
+    'embed_dim': 512,
+    'num_heads': 8,
+    'dim_feedforward': 2048,
+    'num_encoder_layers': 6,
+    'num_decoder_layers': 6,
+    # DETR
+    'num_classes': 100,
+    'num_queries': 100,
+    'in_features': 2048,  # set 512 when backbone is ResNet18
+    # configuration - optimizer
+    'lr': 1e-3,
+    # configuration - criterion
+    # HungarianMatcher
+    'lamb_labels': 1.,
+    'lamb_bboxes': 5.,
+    'lamb_geniou': 2.,
+    # HungarianLoss
+    'eos_coef': 0.1,
+}
 
 
 def main():
@@ -25,24 +50,44 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
     ])
-    trainset = COCODetection(root=root, annFile=annFile, transform=transform)
-    trainloader = COCODataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=0)
+    trainset = COCODetection(root=args['root'], annFile=args['annFile'], transform=transform)
+    trainloader = COCODataLoader(trainset, batch_size=args['batch_size'], shuffle=True, num_workers=args['num_worker'])
 
     # model
-    backbone = nn.Sequential(*list(models.resnet18().children()))[:-2]
-    detector = DETRTransformer(512, 8, 2048, 6, 6)
-    model = DETR(backbone, detector, num_classes=100, num_queries=100)
-    model.to(device)
+    backbone = nn.Sequential(*list(models.resnet50().children()))[:-2]
+    detector = DETRTransformer(
+        embed_dim=args['embed_dim'],
+        num_heads=args['num_heads'],
+        dim_feedforward=args['dim_feedforward'],
+        num_encoder_layers=args['num_encoder_layers'],
+        num_decoder_layers=args['num_decoder_layers'],
+    )
+    model = DETR(
+        backbone=backbone,
+        transformer=detector,
+        num_classes=args['num_classes'],
+        num_queries=args['num_queries'],
+        in_features=args['in_features'],
+    )
+    model.to(args['device'])
 
     # optimizer & criterion
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    matcher = HungarianMatcher(lamb_labels=1., lamb_bboxes=5., lamb_geniou=2.)
-    criterion = HungarianLoss(num_classes=100, matcher=matcher, eos_coef=0.1)
-    criterion.to(device)
+    optimizer = optim.Adam(model.parameters(), lr=args['lr'])
+    matcher = HungarianMatcher(
+        lamb_labels=args['lamb_labels'],
+        lamb_bboxes=args['lamb_bboxes'],
+        lamb_geniou=args['lamb_geniou']
+    )
+    criterion = HungarianLoss(
+        num_classes=args['num_classes'],
+        matcher=matcher,
+        eos_coef=args['eos_coef']
+    )
+    criterion.to(args['device'])
 
     # training loop
-    for epoch in range(epochs):
-        train(trainloader, model, optimizer, criterion, device, epoch, epochs)
+    for epoch in range(args['epochs']):
+        train(trainloader, model, optimizer, criterion, args['device'], epoch, args['epochs'])
 
 
 def train(
@@ -69,13 +114,16 @@ def train(
         loss.backward()
         optimizer.step()
         print(
-            f'Epoch[{epoch:{len(str(epochs))}d}/{epochs}] - '
-            f'batch[{idx:{len(str(len(dataloader)))}d}/{len(dataloader)}] - '
-            f'loss: {loss.item():.3f}'
+            f'\r'
+            f'Epoch[{epoch + 1:{len(str(epochs))}d}/{epochs}] - '
+            f'batch[{idx + 1:{len(str(len(dataloader)))}d}/{len(dataloader)}] - '
+            f'loss(current batch): {loss.item():.3f} - '
+            f'loss(accumulated): {np.nanmean(losses):.3f}',
+            end='',
         )
     print(
-        f'Epoch[{epoch:{len(str(epochs))}d}/{epochs}] - '
-        f'average loss: {np.nanmean(losses)}'
+        f'Epoch[{epoch + 1:{len(str(epochs))}d}/{epochs}] - '
+        f'average loss: {np.nanmean(losses):.3f}'
     )
 
 
