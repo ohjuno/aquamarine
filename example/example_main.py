@@ -16,7 +16,7 @@ args = {
     # configuration - dataloader
     'root': '/mnt/datasets/coco/train2017',
     'annFile': '/mnt/datasets/coco/annotations/instances_train2017.json',
-    'batch_size': 32,
+    'batch_size': 40,
     'num_worker': 20,  # set 0 when debugging
     # configuration - experiment
     'device': 'cuda:0',
@@ -122,6 +122,7 @@ def train(
             end='',
         )
     print(
+        f'\r'
         f'Epoch[{epoch + 1:{len(str(epochs))}d}/{epochs}] - '
         f'average loss: {np.nanmean(losses):.3f}'
     )
