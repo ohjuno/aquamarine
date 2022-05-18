@@ -3,8 +3,8 @@ import torchvision.models as models
 import torchvision.transforms as transforms
 
 from aquamarine.datasets.coco import COCODetection, COCODataLoader
-from aquamarine.models import DETR, DETRTransformer
-from aquamarine.modules import HungarianLoss, HungarianMatcher
+from aquamarine.models import DETR, DETRTransformer, HungarianMatcher
+from aquamarine.modules import HungarianLoss
 
 
 if __name__ == '__main__':
