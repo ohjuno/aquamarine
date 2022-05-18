@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 from einops import rearrange
@@ -34,4 +35,10 @@ class DETR(nn.Module):
         pos = self.pos[:, :n, :].repeat(b, 1, 1).to(x.device)
         query_pos = self.query_pos.repeat(b, 1, 1).to(x.device)
         x = self.transformer(x, pos, query_pos)
-        return {'labels': self.mlp_class(x), 'bboxes': self.mlp_boxes(x).sigmoid()}
+        return {'labels': self.mlp_class(x), 'bboxes': self.box_cxcywh_to_xyxy(self.mlp_boxes(x).sigmoid())}
+
+    @staticmethod
+    def box_cxcywh_to_xyxy(x):
+        x_c, y_c, w, h = x.unbind(-1)
+        b = [(x_c - 0.5 * w), (y_c - 0.5 * h), (x_c + 0.5 * w), (y_c + 0.5 * h)]
+        return torch.stack(b, dim=-1)

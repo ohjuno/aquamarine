@@ -7,12 +7,6 @@ from torchvision.ops.boxes import generalized_box_iou
 from einops import rearrange
 
 
-def box_cxcywh_to_xyxy(x):
-    x_c, y_c, w, h = x.unbind(-1)
-    b = [(x_c - 0.5 * w), (y_c - 0.5 * h), (x_c + 0.5 * w), (y_c + 0.5 * h)]
-    return torch.stack(b, dim=-1)
-
-
 class HungarianMatcher(nn.Module):
 
     def __init__(self, lamb_labels: float = 1., lamb_bboxes: float = 1., lamb_geniou: float = 1.):
@@ -30,7 +24,7 @@ class HungarianMatcher(nn.Module):
 
         cost_labels = 1 - outputs_labels[:, targets_labels.long()]
         cost_bboxes = torch.cdist(outputs_bboxes, targets_bboxes, p=1)
-        cost_geniou = 1 - generalized_box_iou(box_cxcywh_to_xyxy(outputs_bboxes), targets_bboxes)
+        cost_geniou = 1 - generalized_box_iou(outputs_bboxes, targets_bboxes)
         cost = self.ll * cost_labels + self.lb * cost_bboxes + self.lg * cost_geniou
         cost = rearrange(cost, '(b n) d -> b n d', b=outputs['labels'].shape[0]).cpu()
 

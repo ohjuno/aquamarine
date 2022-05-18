@@ -29,12 +29,6 @@ class HungarianLoss(nn.Module):
         targets_idx = torch.cat([j for (i, j) in indices])
         return batch_idx, targets_idx
 
-    @staticmethod
-    def box_cxcywh_to_xyxy(x):
-        x_c, y_c, w, h = x.unbind(-1)
-        b = [(x_c - 0.5 * w), (y_c - 0.5 * h), (x_c + 0.5 * w), (y_c + 0.5 * h)]
-        return torch.stack(b, dim=-1)
-
     def get_loss_labels(self, outputs, targets, indices):
         indexes = self.get_outputs_permutation_index(indices)
         outputs_labels = outputs['labels']
@@ -50,7 +44,7 @@ class HungarianLoss(nn.Module):
         targets_bboxes = torch.cat([target['bboxes'][j] for target, (i, j) in zip(targets, indices)], dim=0)
         loss_bboxes = F.l1_loss(outputs_bboxes, targets_bboxes, reduction='none')
         loss_bboxes = loss_bboxes.sum() / num_bboxes
-        loss_geniou = 1 - torch.diag(generalized_box_iou(self.box_cxcywh_to_xyxy(outputs_bboxes), targets_bboxes))
+        loss_geniou = 1 - torch.diag(generalized_box_iou(outputs_bboxes, targets_bboxes))
         loss_geniou = loss_geniou.sum() / num_bboxes
         return {'loss_bboxes': loss_bboxes, 'loss_giou': loss_geniou}
 
