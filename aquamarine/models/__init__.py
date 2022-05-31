@@ -1,5 +1,5 @@
-from aquamarine.models.common import *
-from aquamarine.models.detectors import *
+from aquamarine.models.detector import DETR, DETRTransformer, HungarianMatcher
+from aquamarine.models.transformer import MultiHeadAttention, FeedForward
 
 
 __all__ = ['DETR', 'DETRTransformer', 'HungarianMatcher']
