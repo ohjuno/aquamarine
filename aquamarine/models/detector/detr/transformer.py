@@ -59,8 +59,8 @@ class DETRTransformer(Module):
         Shape:
             ...
         """
-        encoder_memory = self.encoder(src, pos)
-        return self.decoder(tgt, encoder_memory, pos, query_pos)
+        memory = self.encoder(src, pos=pos)
+        return self.decoder(tgt, memory, pos=pos, query_pos=query_pos)
 
 
 class DETREncoder(Module):
@@ -222,7 +222,7 @@ class DETRDecoderLayer(Module):
 
     # multihead attention block
     def _ma_block(self, x: Tensor, mem: Tensor, attn_mask: Optional[Tensor] = None,
-                   pos: Optional[Tensor] = None, query_pos: Optional[Tensor] = None) -> Tensor:
+                  pos: Optional[Tensor] = None, query_pos: Optional[Tensor] = None) -> Tensor:
         q = _with_positional_encoding(x, query_pos)
         k = _with_positional_encoding(mem, pos)
         x = self.multihead_attn(q, k, mem, attn_mask=attn_mask)
