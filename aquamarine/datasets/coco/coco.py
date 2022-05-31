@@ -45,6 +45,7 @@ class COCODetection(VisionDataset):
         bboxes[:, 2:] += bboxes[:, :2]
         bboxes[:, 0::2].clamp_(min=0, max=image.size[0])
         bboxes[:, 1::2].clamp_(min=0, max=image.size[1])
+        # bounding box format: x0, y0, x1, y1 (xyxy)
 
         labels = [annotation['category_id'] for annotation in annotations]
         labels = torch.tensor(labels, dtype=torch.float32)

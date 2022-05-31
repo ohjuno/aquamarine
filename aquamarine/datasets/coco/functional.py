@@ -9,9 +9,11 @@ def coco_collate_fn(batch):
 
 def align_spatial_shape_to_square(tensor_shapes):
     shape = tensor_shapes[0]
-    for sublist in tensor_shapes[1:]:
-        for idx, item in enumerate(sublist):
-            shape[idx] = max(shape[idx], item)
+    # for sublist in tensor_shapes[1:]:
+    #     for idx, item in enumerate(sublist):
+    #         shape[idx] = max(shape[idx], item)
+    long = max(shape)
+    shape = [shape[0], long, long]
     return shape
 
 
