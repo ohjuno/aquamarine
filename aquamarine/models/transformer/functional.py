@@ -60,7 +60,7 @@ def multi_head_attention(
 ):
     # set up shape vars
     bsz, nt, embed_dim = query.shape
-    bsz, ns, embed_dim = key.shape
+    bsz, ns, _ = key.shape
     if isinstance(embed_dim, torch.Tensor):
         # embed_dim can be a tensor when JIT tracing
         dim_heads = embed_dim.div(num_heads, rounding_mode='trunc')
@@ -68,11 +68,9 @@ def multi_head_attention(
         dim_heads = embed_dim // num_heads
 
     # in projection
-    q, k, v = in_projection(
-        query, key, value,
-        q_proj_weight, k_proj_weight, v_proj_weight,
-        q_proj_bias, k_proj_bias, v_proj_bias,
-    )
+    q, k, v = in_projection(query, key, value,
+                            q_proj_weight, k_proj_weight, v_proj_weight,
+                            q_proj_bias, k_proj_bias, v_proj_bias)
 
     # reshape q, k, v for multi head attention
     q = q.contiguous().view(bsz * num_heads, nt, dim_heads)
