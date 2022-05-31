@@ -19,7 +19,7 @@ if __name__ == '__main__':
     trainloader = COCODataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=0)
 
     # model
-    backbone = nn.Sequential(*list(models.resnet18().children()))[:-2]
+    backbone = nn.Sequential(*list(models.resnet50().children()))[:-2]
     detector = DETRTransformer(512, 8, 2048, 6, 6)
     model = DETR(backbone, detector, num_classes=100, num_queries=100)
 
