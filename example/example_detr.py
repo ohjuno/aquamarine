@@ -33,8 +33,8 @@ if __name__ == '__main__':
     # model
     backbone = nn.Sequential(*list(models.resnet50().children()))[:-2]
     detector = DETRTransformer(512, 8, 2048, 6, 6)
-    model = DETR(backbone, detector, num_classes=num_classes, num_queries=num_queries)
-    model.to(device)
+    model = DETR(backbone, detector, num_classes=num_classes, num_queries=num_queries, **factory_kwargs)
+    # model.to(device)
 
     # object queries & positional encodings
     object_queries = torch.zeros(batch_size, num_queries, 512, **factory_kwargs)
