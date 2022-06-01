@@ -60,7 +60,8 @@ class DETRTransformer(Module):
             ...
         """
         memory = self.encoder(src, pos=pos)
-        return self.decoder(tgt, memory, pos=pos, query_pos=query_pos)
+        output = self.decoder(tgt, memory, pos=pos, query_pos=query_pos)
+        return output
 
 
 class DETREncoder(Module):
