@@ -1,4 +1,4 @@
-from typing import Iterable
+from typing import Any, Iterable, List
 
 import argparse
 import numpy as np
@@ -8,7 +8,11 @@ import torch.optim as optim
 import torchvision.models as models
 import aquamarine.datasets.coco.transforms as transforms
 
-from aquamarine.datasets.coco import COCODetection, COCODataLoader
+from torch import Tensor
+from torch.nn import Module
+from torch.optim import Optimizer
+
+from aquamarine.datasets import COCODetection, COCODataLoader
 from aquamarine.models import DETR, DETRTransformer, HungarianMatcher
 from aquamarine.modules import HungarianLoss
 
@@ -17,8 +21,10 @@ def get_parser():
     parser = argparse.ArgumentParser('DETR Trainer', add_help=False)
 
     # dataset and dataloader
-    parser.add_argument('--root', default='/mnt/datasets/coco/train2017', type=str)
-    parser.add_argument('--annFile', default='/mnt/datasets/coco/annotations/instances_train2017.json', type=str)
+    parser.add_argument('--train_root', default='/mnt/datasets/coco/train2017', type=str)
+    parser.add_argument('--train_annFile', default='/mnt/datasets/coco/annotations/instances_train2017.json', type=str)
+    parser.add_argument('--valid_root', default='/mnt/datasets/coco/val2017', type=str)
+    parser.add_argument('--valid_annFile', default='/mnt/datasets/coco/annotations/instances_val2017.json', type=str)
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--num_worker', default=32, type=int)
     parser.add_argument('--resolution', default=640, type=int)
@@ -43,12 +49,13 @@ def get_parser():
     # experiments
     parser.add_argument('--device', default='cuda:0', type=str)
     parser.add_argument('--epochs', default=100, type=int)
+    parser.add_argument('--checkpoint', default='', type=str)
+    parser.add_argument('--tensorboard', default=False, type=bool)
 
     return parser
 
 
 def main(args):
-
     factory_kwargs = dict(device=args.device, dtype=None)
 
     # dataloader
@@ -57,9 +64,10 @@ def main(args):
         transforms.ToTensor(),
         transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
     ])
-    trainset = COCODetection(root=args.root, annFile=args.annFile, transforms=transform)
-    trainloader = COCODataLoader(trainset, batch_size=args.batch_size, shuffle=True,
-                                 num_workers=args.num_worker, drop_last=True)
+    trainset = COCODetection(root=args.train_root, annFile=args.train_annFile, transforms=transform)
+    validset = COCODetection(root=args.valid_root, annFile=args.valid_annFile, transforms=transform)
+    trainloader = COCODataLoader(trainset, args.batch_size, True, num_workers=args.num_worker, drop_last=True)
+    validloader = COCODataLoader(validset, args.batch_size, False, num_workers=args.num_worker, drop_last=True)
 
     # model
     backbone = nn.Sequential(*list(models.resnet50().children()))[:-2]
@@ -86,34 +94,21 @@ def main(args):
 
     # optimizer & criterion
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    matcher = HungarianMatcher(
-        lamb_labels=args.lamb_labels,
-        lamb_bboxes=args.lamb_bboxes,
-        lamb_geniou=args.lamb_geniou,
-    )
-    criterion = HungarianLoss(
-        num_classes=args.num_classes,
-        matcher=matcher,
-        eos_coef=args.eos_coef,
-    )
+    matcher = HungarianMatcher(lamb_labels=args.lamb_labels, lamb_bboxes=args.lamb_bboxes, lamb_geniou=args.lamb_geniou)
+    criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, eos_coef=args.eos_coef)
     criterion.to(args.device)
+
+    # checkpoint & tensorboard
+    state = ...
 
     # training loop
     for epoch in range(args.epochs):
         train(trainloader, model, object_queries, pos, query_pos, optimizer, criterion, epoch, args)
+        _ = valid(validloader, model, object_queries, pos, query_pos, criterion, epoch, args)
 
 
-def train(
-        dataloader: Iterable,
-        model: nn.Module,
-        object_queries: torch.Tensor,
-        pos: torch.Tensor,
-        query_pos: torch.Tensor,
-        optimizer: optim.Optimizer,
-        criterion: nn.Module,
-        epoch: int,
-        args,
-):
+def train(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tensor, query_pos: Tensor,
+          optimizer: Optimizer, criterion: Module, epoch: int, args: Any) -> None:
     model.train()
     criterion.train()
     losses = []
@@ -143,6 +138,37 @@ def train(
         f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
         f'average loss: {np.nanmean(losses):.3f}'
     )
+
+
+def valid(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tensor, query_pos: Tensor,
+          criterion: Module, epoch: int, args: Any) -> List[Any]:
+    model.eval()
+    criterion.eval()
+    losses = []
+    for idx, batch in enumerate(dataloader):
+        inputs, targets = batch
+        inputs = inputs.to(args.device)
+        targets = [{k: v.to(args.device) for k, v in target.items()} for target in targets]
+        outputs = model(inputs, object_queries, pos, query_pos)
+        outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
+        outputs = dict(labels=outputs[0], bboxes=outputs[1])
+        loss_dict = criterion(outputs, targets)
+        loss = sum(loss_dict[k] for k in loss_dict.keys())
+        losses.append(loss.item())
+        print(
+            f'\r'
+            f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
+            f'batch[{idx + 1:{len(str(len(dataloader)))}d}/{len(dataloader)}] - '
+            f'loss(current batch): {loss.item():.3f} - '
+            f'loss(accumulated): {np.nanmean(losses):.3f}',
+            end='',
+        )
+    print(
+        f'\r'
+        f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
+        f'average loss: {np.nanmean(losses):.3f}'
+    )
+    return losses
 
 
 if __name__ == '__main__':
