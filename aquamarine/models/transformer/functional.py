@@ -36,12 +36,6 @@ def scale_dot_product_attention(
     return output
 
 
-def memory_efficient_attention():
-    # Self-Attention does not need O(n^2) Memory
-    # https://arxiv.org/pdf/2112.05682.pdf
-    pass
-
-
 def multi_head_attention(
         query: Tensor,
         key: Tensor,
