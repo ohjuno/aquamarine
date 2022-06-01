@@ -1,5 +1,6 @@
 from typing import Any, Iterable, List
 
+import gc
 import argparse
 import numpy as np
 import torch
@@ -11,10 +12,12 @@ import aquamarine.datasets.coco.transforms as transforms
 from torch import Tensor
 from torch.nn import Module
 from torch.optim import Optimizer
+from torch.utils.tensorboard import SummaryWriter
 
 from aquamarine.datasets import COCODetection, COCODataLoader
 from aquamarine.models import DETR, DETRTransformer, HungarianMatcher
 from aquamarine.modules import HungarianLoss
+from aquamarine.utils import CKPT
 
 
 def get_parser():
@@ -49,8 +52,8 @@ def get_parser():
     # experiments
     parser.add_argument('--device', default='cuda:0', type=str)
     parser.add_argument('--epochs', default=100, type=int)
-    parser.add_argument('--checkpoint', default='', type=str)
-    parser.add_argument('--tensorboard', default=False, type=bool)
+    parser.add_argument('--checkpoint', default='/tmp/pycharm_project_aquamarine/runs', type=str)
+    parser.add_argument('--tensorboard', default='/tmp/pycharm_project_aquamarine/runs', type=str)
 
     return parser
 
@@ -99,16 +102,28 @@ def main(args):
     criterion.to(args.device)
 
     # checkpoint & tensorboard
-    state = ...
+    state = {
+        'model': model,
+        'matcher': matcher,
+        'criterion': criterion,
+        'optimizer': optimizer,
+    }
+    checkpoint = CKPT(args.checkpoint, state)
+    writer = SummaryWriter(args.tensorboard)
 
     # training loop
     for epoch in range(args.epochs):
-        train(trainloader, model, object_queries, pos, query_pos, optimizer, criterion, epoch, args)
-        _ = valid(validloader, model, object_queries, pos, query_pos, criterion, epoch, args)
+        train(trainloader, model, object_queries, pos, query_pos, optimizer, criterion, epoch, writer, args)
+        score = valid(validloader, model, object_queries, pos, query_pos, criterion, epoch, writer, args)
+        checkpoint.step(score)
+
+    torch.cuda.empty_cache()
+    writer.close()
+    gc.collect()
 
 
 def train(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tensor, query_pos: Tensor,
-          optimizer: Optimizer, criterion: Module, epoch: int, args: Any) -> None:
+          optimizer: Optimizer, criterion: Module, epoch: int, writer: Any, args: Any) -> None:
     model.train()
     criterion.train()
     losses = []
@@ -133,15 +148,19 @@ def train(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
             f'loss(accumulated): {np.nanmean(losses):.3f}',
             end='',
         )
+        writer.add_scalar('train / training loss (batch)', loss.item(), epoch * len(dataloader) + idx)
     print(
         f'\r'
         f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
         f'average loss: {np.nanmean(losses):.3f}'
     )
+    writer.add_scalar('train / training loss (epoch)', np.nanmean(losses), epoch)
+    torch.cuda.empty_cache()
+    gc.collect()
 
 
 def valid(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tensor, query_pos: Tensor,
-          criterion: Module, epoch: int, args: Any) -> List[Any]:
+          criterion: Module, epoch: int, writer:Any, args: Any) -> List[Any]:
     model.eval()
     criterion.eval()
     losses = []
@@ -163,11 +182,15 @@ def valid(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
             f'loss(accumulated): {np.nanmean(losses):.3f}',
             end='',
         )
+        writer.add_scalar('valid / validation loss (batch)', loss.item(), epoch * len(dataloader) + idx)
     print(
         f'\r'
         f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
         f'average loss: {np.nanmean(losses):.3f}'
     )
+    writer.add_scalar('valid / validation loss (epoch)', np.nanmean(losses), epoch)
+    torch.cuda.empty_cache()
+    gc.collect()
     return losses
 
 
