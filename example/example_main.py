@@ -12,6 +12,7 @@ import aquamarine.datasets.coco.transforms as transforms
 from torch import Tensor
 from torch.nn import Module
 from torch.optim import Optimizer
+from torch.cuda.amp import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
 from aquamarine.datasets import COCODetection, COCODataLoader
@@ -28,7 +29,7 @@ def get_parser():
     parser.add_argument('--train_annFile', default='/mnt/datasets/coco/annotations/instances_train2017.json', type=str)
     parser.add_argument('--valid_root', default='/mnt/datasets/coco/val2017', type=str)
     parser.add_argument('--valid_annFile', default='/mnt/datasets/coco/annotations/instances_val2017.json', type=str)
-    parser.add_argument('--batch_size', default=32, type=int)
+    parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--num_worker', default=32, type=int)
     parser.add_argument('--resolution', default=640, type=int)
 
@@ -95,11 +96,12 @@ def main(args):
     pos = nn.Parameter(torch.empty((args.batch_size, int((args.resolution / 32) ** 2), 512), **factory_kwargs))
     query_pos = nn.Parameter(torch.empty((args.batch_size, args.num_queries, 512), **factory_kwargs))
 
-    # optimizer & criterion
+    # optimizer & criterion & amp (automatic mixed precision)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     matcher = HungarianMatcher(lamb_labels=args.lamb_labels, lamb_bboxes=args.lamb_bboxes, lamb_geniou=args.lamb_geniou)
     criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, eos_coef=args.eos_coef)
     criterion.to(args.device)
+    scaler = GradScaler()
 
     # checkpoint & tensorboard
     state = {
@@ -113,7 +115,7 @@ def main(args):
 
     # training loop
     for epoch in range(args.epochs):
-        train(trainloader, model, object_queries, pos, query_pos, optimizer, criterion, epoch, writer, args)
+        train(trainloader, model, object_queries, pos, query_pos, optimizer, scaler, criterion, epoch, writer, args)
         score = valid(validloader, model, object_queries, pos, query_pos, criterion, epoch, writer, args)
         checkpoint.step(score)
 
@@ -123,7 +125,7 @@ def main(args):
 
 
 def train(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tensor, query_pos: Tensor,
-          optimizer: Optimizer, criterion: Module, epoch: int, writer: Any, args: Any) -> None:
+          optimizer: Optimizer, scaler: Any, criterion: Module, epoch: int, writer: Any, args: Any) -> None:
     model.train()
     criterion.train()
     losses = []
@@ -131,15 +133,17 @@ def train(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
         inputs, targets = batch
         inputs = inputs.to(args.device)
         targets = [{k: v.to(args.device) for k, v in target.items()} for target in targets]
-        outputs = model(inputs, object_queries, pos, query_pos)
-        outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
-        outputs = dict(labels=outputs[0], bboxes=outputs[1])
-        loss_dict = criterion(outputs, targets)
-        loss = sum(loss_dict[k] for k in loss_dict.keys())
-        losses.append(loss.item())
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        with torch.cuda.amp.autocast():
+            outputs = model(inputs, object_queries, pos, query_pos)
+            outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
+            outputs = dict(labels=outputs[0], bboxes=outputs[1])
+            loss_dict = criterion(outputs, targets)
+            loss = sum(loss_dict[k] for k in loss_dict.keys())
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        losses.append(loss.item())
         print(
             f'\r'
             f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
@@ -164,25 +168,26 @@ def valid(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
     model.eval()
     criterion.eval()
     losses = []
-    for idx, batch in enumerate(dataloader):
-        inputs, targets = batch
-        inputs = inputs.to(args.device)
-        targets = [{k: v.to(args.device) for k, v in target.items()} for target in targets]
-        outputs = model(inputs, object_queries, pos, query_pos)
-        outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
-        outputs = dict(labels=outputs[0], bboxes=outputs[1])
-        loss_dict = criterion(outputs, targets)
-        loss = sum(loss_dict[k] for k in loss_dict.keys())
-        losses.append(loss.item())
-        print(
-            f'\r'
-            f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
-            f'batch[{idx + 1:{len(str(len(dataloader)))}d}/{len(dataloader)}] - '
-            f'loss(current batch): {loss.item():.3f} - '
-            f'loss(accumulated): {np.nanmean(losses):.3f}',
-            end='',
-        )
-        writer.add_scalar('valid / validation loss (batch)', loss.item(), epoch * len(dataloader) + idx)
+    with torch.no_grad():
+        for idx, batch in enumerate(dataloader):
+            inputs, targets = batch
+            inputs = inputs.to(args.device)
+            targets = [{k: v.to(args.device) for k, v in target.items()} for target in targets]
+            outputs = model(inputs, object_queries, pos, query_pos)
+            outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
+            outputs = dict(labels=outputs[0], bboxes=outputs[1])
+            loss_dict = criterion(outputs, targets)
+            loss = sum(loss_dict[k] for k in loss_dict.keys())
+            losses.append(loss.item())
+            print(
+                f'\r'
+                f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
+                f'batch[{idx + 1:{len(str(len(dataloader)))}d}/{len(dataloader)}] - '
+                f'loss(current batch): {loss.item():.3f} - '
+                f'loss(accumulated): {np.nanmean(losses):.3f}',
+                end='',
+            )
+            writer.add_scalar('valid / validation loss (batch)', loss.item(), epoch * len(dataloader) + idx)
     print(
         f'\r'
         f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
