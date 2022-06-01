@@ -1,20 +1,23 @@
+from typing import Any
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
+from torch.nn import Module
 from torchvision.ops.boxes import generalized_box_iou
 from aquamarine.datasets.utils.ops import box_cxcywh_to_xyxy
 
 
-class HungarianLoss(nn.Module):
+class HungarianLoss(Module):
 
-    def __init__(self, num_classes, matcher, eos_coef):
+    def __init__(self, num_classes: int, matcher: Any, eos_coef: float, device=None, dtype=None) -> None:
+        factory_kwargs = dict(device=device, dtype=dtype)
         super(HungarianLoss, self).__init__()
         self.num_classes = num_classes
         self.matcher = matcher
         self.eos_coef = eos_coef
 
-        empty_weight = torch.ones(self.num_classes + 1)
+        empty_weight = torch.ones(self.num_classes + 1, **factory_kwargs)
         empty_weight[-1] = self.eos_coef
         self.register_buffer('empty_weight', empty_weight)
 
