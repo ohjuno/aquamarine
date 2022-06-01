@@ -28,7 +28,7 @@ if __name__ == '__main__':
         # `Normalize` converts the format of bounding box from `xyxy` to `cxcywh`
     ])
     trainset = COCODetection(root=root, annFile=annFile, transforms=coco_transforms)
-    trainloader = COCODataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=0)
+    trainloader = COCODataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
 
     # model
     backbone = nn.Sequential(*list(models.resnet50().children()))[:-2]
