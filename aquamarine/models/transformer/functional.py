@@ -29,16 +29,11 @@ def scale_dot_product_attention(
     attn = torch.bmm(q, k.transpose(-2, -1))
     attn = attn + attn_mask if attn_mask is not None else attn
     attn = softmax(attn, dim=-1)
+    attn = torch.nan_to_num(attn, nan=0.)  # prevent nan resulting from padded-out inputs
     attn = dropout(attn, p=dropout_p) if dropout_p > 0.0 else attn
     # (B, Nt, Ns) @ (B, Ns, E) -> (B, Nt, E)
     output = torch.bmm(attn, v)
     return output
-
-
-def memory_efficient_attention():
-    # Self-Attention does not need O(n^2) Memory
-    # https://arxiv.org/pdf/2112.05682.pdf
-    pass
 
 
 def multi_head_attention(
@@ -60,7 +55,7 @@ def multi_head_attention(
 ):
     # set up shape vars
     bsz, nt, embed_dim = query.shape
-    bsz, ns, embed_dim = key.shape
+    bsz, ns, _ = key.shape
     if isinstance(embed_dim, torch.Tensor):
         # embed_dim can be a tensor when JIT tracing
         dim_heads = embed_dim.div(num_heads, rounding_mode='trunc')
@@ -68,11 +63,9 @@ def multi_head_attention(
         dim_heads = embed_dim // num_heads
 
     # in projection
-    q, k, v = in_projection(
-        query, key, value,
-        q_proj_weight, k_proj_weight, v_proj_weight,
-        q_proj_bias, k_proj_bias, v_proj_bias,
-    )
+    q, k, v = in_projection(query, key, value,
+                            q_proj_weight, k_proj_weight, v_proj_weight,
+                            q_proj_bias, k_proj_bias, v_proj_bias)
 
     # reshape q, k, v for multi head attention
     q = q.contiguous().view(bsz * num_heads, nt, dim_heads)

@@ -10,6 +10,14 @@ from torch.nn.functional import relu, gelu
 import aquamarine.models.transformer.functional as F
 
 
+def _get_activation_fn(activation):
+    if activation == "relu":
+        return relu
+    elif activation == "gelu":
+        return gelu
+    raise RuntimeError("activation should be relu/gelu, not {}".format(activation))
+
+
 # This class exists solely to avoid triggering an obscure error when scripting
 # an improperly quantized attention layer. See this issue for details:
 # https://github.com/pytorch/pytorch/issues/58969
@@ -77,22 +85,14 @@ class MultiHeadAttention(Module):
 class FeedForward(Module):
 
     def __init__(self, embed_dim, dim_feedforward=2048, dropout=0.,
-                 activation: Union[str, Callable[[Tensor], Tensor]] = 'relu', device=None, dtype=None) -> None:
+                 activation: Union[str, Callable[[Tensor], Tensor]] = relu, device=None, dtype=None) -> None:
         factory_kwargs = dict(device=device, dtype=dtype)
         super(FeedForward, self).__init__()
         self.linear1 = Linear(embed_dim, dim_feedforward, **factory_kwargs)
         self.linear2 = Linear(dim_feedforward, embed_dim, **factory_kwargs)
         self.dropout1 = Dropout(dropout)
         self.dropout2 = Dropout(dropout)
-        self.activation = self._get_activation_fn(activation) if isinstance(activation, str) else activation
-
-    @staticmethod
-    def _get_activation_fn(activation):
-        if activation == "relu":
-            return relu
-        elif activation == "gelu":
-            return gelu
-        raise RuntimeError("activation should be relu/gelu, not {}".format(activation))
+        self.activation = _get_activation_fn(activation) if isinstance(activation, str) else activation
 
     def forward(self, x):
         return self.dropout2(self.linear2(self.dropout1(self.activation(self.linear1(x)))))

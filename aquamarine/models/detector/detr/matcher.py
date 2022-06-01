@@ -3,6 +3,7 @@ import torch.nn as nn
 
 from scipy.optimize import linear_sum_assignment
 from torchvision.ops.boxes import generalized_box_iou
+from aquamarine.datasets.utils.ops import box_cxcywh_to_xyxy
 
 from einops import rearrange
 
@@ -24,7 +25,7 @@ class HungarianMatcher(nn.Module):
 
         cost_labels = 1 - outputs_labels[:, targets_labels.long()]
         cost_bboxes = torch.cdist(outputs_bboxes, targets_bboxes, p=1)
-        cost_geniou = 1 - generalized_box_iou(outputs_bboxes, targets_bboxes)
+        cost_geniou = 1 - generalized_box_iou(box_cxcywh_to_xyxy(outputs_bboxes), box_cxcywh_to_xyxy(targets_bboxes))
         cost = self.ll * cost_labels + self.lb * cost_bboxes + self.lg * cost_geniou
         cost = rearrange(cost, '(b n) d -> b n d', b=outputs['labels'].shape[0]).cpu()
 

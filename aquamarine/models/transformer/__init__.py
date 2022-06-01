@@ -1,4 +1,4 @@
-from aquamarine.models.transformer.sublayer import MultiHeadAttention, FeedForward
+from aquamarine.models.transformer.activation import MultiHeadAttention, FeedForward
 
 
 __all__ = ['MultiHeadAttention', 'FeedForward']
