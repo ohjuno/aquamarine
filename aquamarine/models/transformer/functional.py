@@ -29,6 +29,7 @@ def scale_dot_product_attention(
     attn = torch.bmm(q, k.transpose(-2, -1))
     attn = attn + attn_mask if attn_mask is not None else attn
     attn = softmax(attn, dim=-1)
+    attn = torch.nan_to_num(attn, nan=0.)  # prevent nan resulting from padded-out inputs
     attn = dropout(attn, p=dropout_p) if dropout_p > 0.0 else attn
     # (B, Nt, Ns) @ (B, Ns, E) -> (B, Nt, E)
     output = torch.bmm(attn, v)
