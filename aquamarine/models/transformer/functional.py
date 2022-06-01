@@ -52,7 +52,7 @@ def multi_head_attention(
         dropout_p: float,
         training: bool = True,
         attn_mask: Optional[Tensor] = None,
-):
+) -> Tensor:
     # set up shape vars
     bsz, nt, embed_dim = query.shape
     bsz, ns, _ = key.shape
