@@ -5,7 +5,6 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torchvision.models as models
 import aquamarine.datasets.coco.transforms as transforms
 
@@ -18,6 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 from aquamarine.datasets import COCODetection, COCODataLoader
 from aquamarine.models import DETR, DETRTransformer, HungarianMatcher
 from aquamarine.modules import HungarianLoss
+from aquamarine.optimizer import MADGRAD, CosineAnnealingWarmRestarts
 from aquamarine.utils import CKPT
 
 
@@ -29,8 +29,8 @@ def get_parser():
     parser.add_argument('--train_annFile', default='/mnt/datasets/coco/annotations/instances_train2017.json', type=str)
     parser.add_argument('--valid_root', default='/mnt/datasets/coco/val2017', type=str)
     parser.add_argument('--valid_annFile', default='/mnt/datasets/coco/annotations/instances_val2017.json', type=str)
-    parser.add_argument('--batch_size', default=370, type=int)
-    parser.add_argument('--num_worker', default=32, type=int)
+    parser.add_argument('--batch_size', default=380, type=int)
+    parser.add_argument('--num_worker', default=16, type=int)
     parser.add_argument('--resolution', default=224, type=int)
 
     # model
@@ -44,7 +44,7 @@ def get_parser():
     parser.add_argument('--in_features', default=2048, type=int)
 
     # optimizer & criterion
-    parser.add_argument('--lr', default=1e-3, type=float)
+    parser.add_argument('--lr', default=1e-2, type=float)
     parser.add_argument('--lamb_labels', default=1., type=float)
     parser.add_argument('--lamb_bboxes', default=5., type=float)
     parser.add_argument('--lamb_geniou', default=2., type=float)
@@ -52,9 +52,10 @@ def get_parser():
 
     # experiments
     parser.add_argument('--device', default='cuda:0', type=str)
-    parser.add_argument('--epochs', default=100, type=int)
-    parser.add_argument('--checkpoint', default='/tmp/pycharm_project_aquamarine/runs', type=str)
-    parser.add_argument('--tensorboard', default='/tmp/pycharm_project_aquamarine/runs', type=str)
+    parser.add_argument('--epochs', default=10000, type=int)
+    parser.add_argument('--checkpoint', default='/tmp/runs/detr_r50_madgrad_scheduled_1', type=str)
+    parser.add_argument('--tensorboard', default='/tmp/runs/detr_r50_madgrad_scheduled_1', type=str)
+    parser.add_argument('--amp', default=True, type=bool)
 
     return parser
 
@@ -99,11 +100,11 @@ def main(args):
     query_pos = nn.Parameter(torch.empty((args.batch_size, args.num_queries, 512), **factory_kwargs))
     # TODO: positional encoding that can support dynamic batch size and onnx at the same time is required
 
-    # optimizer & criterion & amp (automatic mixed precision)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    # optimizer, criterion, scheduler and amp (automatic mixed precision)
+    optimizer = MADGRAD(model.parameters(), lr=args.lr)
     matcher = HungarianMatcher(lamb_labels=args.lamb_labels, lamb_bboxes=args.lamb_bboxes, lamb_geniou=args.lamb_geniou)
-    criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, eos_coef=args.eos_coef)
-    criterion.to(args.device)
+    criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, eos_coef=args.eos_coef, **factory_kwargs)
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=100, T_up=20, T_mult=1., lr_delta=0.5)
     scaler = GradScaler()
 
     # checkpoint & tensorboard
@@ -121,10 +122,18 @@ def main(args):
         train(trainloader, model, object_queries, pos, query_pos, optimizer, scaler, criterion, epoch, writer, args)
         score = valid(validloader, model, object_queries, pos, query_pos, criterion, epoch, writer, args)
         checkpoint.step(score)
+        scheduler.step()
 
     torch.cuda.empty_cache()
     writer.close()
     gc.collect()
+
+
+def load_batch(batch, device, non_blocking: bool = False):
+    inputs, targets = batch
+    inputs = inputs.to(device, non_blocking=non_blocking)
+    targets = [{k: v.to(device, non_blocking=non_blocking) for k, v in target.items()} for target in targets]
+    return inputs, targets
 
 
 def train(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tensor, query_pos: Tensor,
@@ -133,9 +142,7 @@ def train(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
     criterion.train()
     losses = []
     for idx, batch in enumerate(dataloader):
-        inputs, targets = batch
-        inputs = inputs.to(args.device)
-        targets = [{k: v.to(args.device) for k, v in target.items()} for target in targets]
+        inputs, targets = load_batch(batch, args.device)
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
             outputs = model(inputs, object_queries, pos, query_pos)
@@ -170,9 +177,7 @@ def valid(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
     losses = []
     with torch.no_grad():
         for idx, batch in enumerate(dataloader):
-            inputs, targets = batch
-            inputs = inputs.to(args.device)
-            targets = [{k: v.to(args.device) for k, v in target.items()} for target in targets]
+            inputs, targets = load_batch(batch, args.device)
             with torch.cuda.amp.autocast():
                 outputs = model(inputs, object_queries, pos, query_pos)
                 loss = criterion(outputs, targets)
