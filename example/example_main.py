@@ -29,9 +29,9 @@ def get_parser():
     parser.add_argument('--train_annFile', default='/mnt/datasets/coco/annotations/instances_train2017.json', type=str)
     parser.add_argument('--valid_root', default='/mnt/datasets/coco/val2017', type=str)
     parser.add_argument('--valid_annFile', default='/mnt/datasets/coco/annotations/instances_val2017.json', type=str)
-    parser.add_argument('--batch_size', default=64, type=int)
+    parser.add_argument('--batch_size', default=370, type=int)
     parser.add_argument('--num_worker', default=32, type=int)
-    parser.add_argument('--resolution', default=640, type=int)
+    parser.add_argument('--resolution', default=224, type=int)
 
     # model
     parser.add_argument('--embed_dim', default=512, type=int)
@@ -139,10 +139,7 @@ def train(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
             outputs = model(inputs, object_queries, pos, query_pos)
-            outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
-            outputs = dict(labels=outputs[0], bboxes=outputs[1])
-            loss_dict = criterion(outputs, targets)
-            loss = sum(loss_dict[k] for k in loss_dict.keys())
+            loss = criterion(outputs, targets)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
@@ -178,10 +175,7 @@ def valid(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
             targets = [{k: v.to(args.device) for k, v in target.items()} for target in targets]
             with torch.cuda.amp.autocast():
                 outputs = model(inputs, object_queries, pos, query_pos)
-                outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
-                outputs = dict(labels=outputs[0], bboxes=outputs[1])
-                loss_dict = criterion(outputs, targets)
-                loss = sum(loss_dict[k] for k in loss_dict.keys())
+                loss = criterion(outputs, targets)
             losses.append(loss.item())
             print(
                 f'\r'
