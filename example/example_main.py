@@ -72,6 +72,8 @@ def main(args):
     validset = COCODetection(root=args.valid_root, annFile=args.valid_annFile, transforms=transform)
     trainloader = COCODataLoader(trainset, args.batch_size, True, num_workers=args.num_worker, drop_last=True)
     validloader = COCODataLoader(validset, args.batch_size, False, num_workers=args.num_worker, drop_last=True)
+    # for now, `drop_last` option should be set to True.
+    # If this option is off, there is a possibility that the last batch and positional encoding will conflict
 
     # model
     backbone = nn.Sequential(*list(models.resnet50().children()))[:-2]
@@ -95,6 +97,7 @@ def main(args):
     object_queries = torch.zeros(args.batch_size, args.num_queries, 512, **factory_kwargs)
     pos = nn.Parameter(torch.empty((args.batch_size, int((args.resolution / 32) ** 2), 512), **factory_kwargs))
     query_pos = nn.Parameter(torch.empty((args.batch_size, args.num_queries, 512), **factory_kwargs))
+    # TODO: positional encoding that can support dynamic batch size and onnx at the same time is required
 
     # optimizer & criterion & amp (automatic mixed precision)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -173,11 +176,12 @@ def valid(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
             inputs, targets = batch
             inputs = inputs.to(args.device)
             targets = [{k: v.to(args.device) for k, v in target.items()} for target in targets]
-            outputs = model(inputs, object_queries, pos, query_pos)
-            outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
-            outputs = dict(labels=outputs[0], bboxes=outputs[1])
-            loss_dict = criterion(outputs, targets)
-            loss = sum(loss_dict[k] for k in loss_dict.keys())
+            with torch.cuda.amp.autocast():
+                outputs = model(inputs, object_queries, pos, query_pos)
+                outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
+                outputs = dict(labels=outputs[0], bboxes=outputs[1])
+                loss_dict = criterion(outputs, targets)
+                loss = sum(loss_dict[k] for k in loss_dict.keys())
             losses.append(loss.item())
             print(
                 f'\r'
