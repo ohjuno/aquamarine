@@ -103,7 +103,9 @@ def main(args):
     # optimizer, criterion, scheduler and amp (automatic mixed precision)
     optimizer = MADGRAD(model.parameters(), lr=args.lr)
     matcher = HungarianMatcher(lamb_labels=args.lamb_labels, lamb_bboxes=args.lamb_bboxes, lamb_geniou=args.lamb_geniou)
-    criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, eos_coef=args.eos_coef, **factory_kwargs)
+    weight_dict = {'loss_labels': args.lamb_labels, 'loss_bboxes': args.lamb_bboxes, 'loss_geniou': args.lamb_geniou}
+    criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, weight_dict=weight_dict,
+                              eos_coef=args.eos_coef, **factory_kwargs)
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=100, T_up=20, T_mult=1., lr_delta=0.5)
     scaler = GradScaler()
 
@@ -200,6 +202,18 @@ def valid(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
     torch.cuda.empty_cache()
     gc.collect()
     return losses
+
+
+def evaluate(dataloader: Iterable, model: Module, object_queries: Tensor, pos:Tensor, query_pos: Tensor,
+             criterion: Module, post_processors, args:Any):
+    model.eval()
+    criterion.eval()
+
+    iou_types = tuple(k for k in ('segm', 'bboxes') if k in post_processors.keys())
+
+    for idx, batch in enumerate(dataloader):
+        inputs, targets = load_batch(batch, args.device)
+        outputs = model(inputs, object_queries, pos, query_pos)
 
 
 if __name__ == '__main__':
