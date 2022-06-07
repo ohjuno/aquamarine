@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Dict
 
 import torch
 import torch.nn.functional as F
@@ -10,12 +10,15 @@ from aquamarine.datasets.utils.ops import box_cxcywh_to_xyxy
 
 class HungarianLoss(Module):
 
-    def __init__(self, num_classes: int, matcher: Any, eos_coef: float, device=None, dtype=None) -> None:
+    def __init__(self, num_classes: int, matcher: Any, weight_dict: Dict, eos_coef: float,
+                 reduction: str = 'sum', device=None, dtype=None) -> None:
         factory_kwargs = dict(device=device, dtype=dtype)
         super(HungarianLoss, self).__init__()
         self.num_classes = num_classes
         self.matcher = matcher
+        self.weight_dict = weight_dict
         self.eos_coef = eos_coef
+        self.reduction = reduction
 
         empty_weight = torch.ones(self.num_classes + 1, **factory_kwargs)
         empty_weight[-1] = self.eos_coef
@@ -54,6 +57,8 @@ class HungarianLoss(Module):
         return {'loss_bboxes': loss_bboxes, 'loss_giou': loss_geniou}
 
     def forward(self, outputs, targets):
+        outputs = torch.split(outputs, [self.num_classes + 1, 4], dim=-1)
+        outputs = dict(labels=outputs[0], bboxes=outputs[1])  # output format for onnx support
         indices = self.matcher(outputs, targets)
         num_bboxes = sum(len(target["labels"]) for target in targets)
         loss_labels = self.get_loss_labels(outputs, targets, indices)
@@ -61,4 +66,5 @@ class HungarianLoss(Module):
         losses = {}
         losses.update(loss_labels)
         losses.update(loss_bboxes)
-        return losses
+        output = sum(losses[k] for k in losses.keys()) if self.reduction == 'sum' else losses
+        return output

@@ -5,19 +5,18 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torchvision.models as models
 import aquamarine.datasets.coco.transforms as transforms
 
 from torch import Tensor
 from torch.nn import Module
 from torch.optim import Optimizer
-from torch.cuda.amp import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
 from aquamarine.datasets import COCODetection, COCODataLoader
 from aquamarine.models import DETR, DETRTransformer, HungarianMatcher
 from aquamarine.modules import HungarianLoss
+from aquamarine.optimizer import MADGRAD, CosineAnnealingWarmRestarts
 from aquamarine.utils import CKPT
 
 
@@ -29,9 +28,9 @@ def get_parser():
     parser.add_argument('--train_annFile', default='/mnt/datasets/coco/annotations/instances_train2017.json', type=str)
     parser.add_argument('--valid_root', default='/mnt/datasets/coco/val2017', type=str)
     parser.add_argument('--valid_annFile', default='/mnt/datasets/coco/annotations/instances_val2017.json', type=str)
-    parser.add_argument('--batch_size', default=64, type=int)
-    parser.add_argument('--num_worker', default=32, type=int)
-    parser.add_argument('--resolution', default=640, type=int)
+    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--num_worker', default=8, type=int)
+    parser.add_argument('--resolution', default=224, type=int)
 
     # model
     parser.add_argument('--embed_dim', default=512, type=int)
@@ -44,7 +43,7 @@ def get_parser():
     parser.add_argument('--in_features', default=2048, type=int)
 
     # optimizer & criterion
-    parser.add_argument('--lr', default=1e-3, type=float)
+    parser.add_argument('--lr', default=1e-2, type=float)
     parser.add_argument('--lamb_labels', default=1., type=float)
     parser.add_argument('--lamb_bboxes', default=5., type=float)
     parser.add_argument('--lamb_geniou', default=2., type=float)
@@ -52,9 +51,10 @@ def get_parser():
 
     # experiments
     parser.add_argument('--device', default='cuda:0', type=str)
-    parser.add_argument('--epochs', default=100, type=int)
-    parser.add_argument('--checkpoint', default='/tmp/pycharm_project_aquamarine/runs', type=str)
-    parser.add_argument('--tensorboard', default='/tmp/pycharm_project_aquamarine/runs', type=str)
+    parser.add_argument('--epochs', default=10000, type=int)
+    parser.add_argument('--checkpoint', default='/mnt/runs/detr_r50_madgrad_cawr_bs_256_rs_224', type=str)
+    parser.add_argument('--tensorboard', default='/mnt/runs/detr_r50_madgrad_cawr_bs_256_rs_224', type=str)
+    parser.add_argument('--amp', default=True, type=bool)
 
     return parser
 
@@ -70,8 +70,8 @@ def main(args):
     ])
     trainset = COCODetection(root=args.train_root, annFile=args.train_annFile, transforms=transform)
     validset = COCODetection(root=args.valid_root, annFile=args.valid_annFile, transforms=transform)
-    trainloader = COCODataLoader(trainset, args.batch_size, True, num_workers=args.num_worker, drop_last=True)
-    validloader = COCODataLoader(validset, args.batch_size, False, num_workers=args.num_worker, drop_last=True)
+    trainloader = COCODataLoader(trainset, args.batch_size, True, num_workers=args.num_worker, pin_memory=True)
+    validloader = COCODataLoader(validset, args.batch_size, False, num_workers=args.num_worker, pin_memory=True)
 
     # model
     backbone = nn.Sequential(*list(models.resnet50().children()))[:-2]
@@ -91,17 +91,16 @@ def main(args):
     )
     model.to(args.device)
 
-    # object queries & positional encodings
-    object_queries = torch.zeros(args.batch_size, args.num_queries, 512, **factory_kwargs)
-    pos = nn.Parameter(torch.empty((args.batch_size, int((args.resolution / 32) ** 2), 512), **factory_kwargs))
-    query_pos = nn.Parameter(torch.empty((args.batch_size, args.num_queries, 512), **factory_kwargs))
+    # positional encodings
+    pos = nn.Parameter(torch.empty((1, int((args.resolution / 32) ** 2), 512), **factory_kwargs))
+    query_pos = nn.Parameter(torch.empty((1, args.num_queries, 512), **factory_kwargs))
 
-    # optimizer & criterion & amp (automatic mixed precision)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    # optimizer, criterion, scheduler and amp (automatic mixed precision)
+    optimizer = MADGRAD(model.parameters(), lr=args.lr)
     matcher = HungarianMatcher(lamb_labels=args.lamb_labels, lamb_bboxes=args.lamb_bboxes, lamb_geniou=args.lamb_geniou)
-    criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, eos_coef=args.eos_coef)
-    criterion.to(args.device)
-    scaler = GradScaler()
+    weight_dict = {'loss_labels': args.lamb_labels, 'loss_bboxes': args.lamb_bboxes, 'loss_geniou': args.lamb_geniou}
+    criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, weight_dict=weight_dict, eos_coef=args.eos_coef, **factory_kwargs)
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=100, T_up=20, T_mult=1., lr_delta=0.5)
 
     # checkpoint & tensorboard
     state = {
@@ -115,34 +114,36 @@ def main(args):
 
     # training loop
     for epoch in range(args.epochs):
-        train(trainloader, model, object_queries, pos, query_pos, optimizer, scaler, criterion, epoch, writer, args)
-        score = valid(validloader, model, object_queries, pos, query_pos, criterion, epoch, writer, args)
+        train(trainloader, model, pos, query_pos, optimizer, criterion, epoch, writer, args)
+        score = valid(validloader, model, pos, query_pos, criterion, epoch, writer, args)
         checkpoint.step(score)
+        scheduler.step()
 
     torch.cuda.empty_cache()
     writer.close()
     gc.collect()
 
 
-def train(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tensor, query_pos: Tensor,
-          optimizer: Optimizer, scaler: Any, criterion: Module, epoch: int, writer: Any, args: Any) -> None:
+def load_batch(batch, device, non_blocking: bool = False):
+    inputs, targets = batch
+    inputs = inputs.to(device, non_blocking=non_blocking)
+    targets = [{k: v.to(device, non_blocking=non_blocking) for k, v in target.items()} for target in targets]
+    return inputs, targets
+
+
+def train(dataloader: Iterable, model: Module, pos: Tensor, query_pos: Tensor,
+          optimizer: Optimizer, criterion: Module, epoch: int, writer: Any, args: Any) -> None:
     model.train()
     criterion.train()
     losses = []
     for idx, batch in enumerate(dataloader):
-        inputs, targets = batch
-        inputs = inputs.to(args.device)
-        targets = [{k: v.to(args.device) for k, v in target.items()} for target in targets]
-        optimizer.zero_grad()
-        with torch.cuda.amp.autocast():
-            outputs = model(inputs, object_queries, pos, query_pos)
-            outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
-            outputs = dict(labels=outputs[0], bboxes=outputs[1])
-            loss_dict = criterion(outputs, targets)
-            loss = sum(loss_dict[k] for k in loss_dict.keys())
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        inputs, targets = load_batch(batch, args.device)
+        object_queries = torch.zeros(inputs.shape[0], args.num_queries, 512, device=args.device)
+        outputs = model(inputs, object_queries, pos, query_pos)
+        optimizer.zero_grad(set_to_none=True)
+        loss = criterion(outputs, targets)
+        loss.backward()
+        optimizer.step()
         losses.append(loss.item())
         print(
             f'\r'
@@ -163,21 +164,17 @@ def train(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
     gc.collect()
 
 
-def valid(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tensor, query_pos: Tensor,
+def valid(dataloader: Iterable, model: Module, pos: Tensor, query_pos: Tensor,
           criterion: Module, epoch: int, writer:Any, args: Any) -> List[Any]:
     model.eval()
     criterion.eval()
     losses = []
     with torch.no_grad():
         for idx, batch in enumerate(dataloader):
-            inputs, targets = batch
-            inputs = inputs.to(args.device)
-            targets = [{k: v.to(args.device) for k, v in target.items()} for target in targets]
+            inputs, targets = load_batch(batch, args.device)
+            object_queries = torch.zeros(inputs.shape[0], args.num_queries, 512, device=args.device)
             outputs = model(inputs, object_queries, pos, query_pos)
-            outputs = torch.split(outputs, [args.num_classes + 1, 4], dim=-1)
-            outputs = dict(labels=outputs[0], bboxes=outputs[1])
-            loss_dict = criterion(outputs, targets)
-            loss = sum(loss_dict[k] for k in loss_dict.keys())
+            loss = criterion(outputs, targets)
             losses.append(loss.item())
             print(
                 f'\r'
@@ -197,6 +194,19 @@ def valid(dataloader: Iterable, model: Module, object_queries: Tensor, pos: Tens
     torch.cuda.empty_cache()
     gc.collect()
     return losses
+
+
+@torch.no_grad()
+def evaluate(dataloader: Iterable, model: Module, object_queries: Tensor, pos:Tensor, query_pos: Tensor,
+             criterion: Module, post_processors:Any, args:Any):
+    model.eval()
+    criterion.eval()
+
+    iou_types = tuple(k for k in ('segm', 'bboxes') if k in post_processors.keys())
+
+    for idx, batch in enumerate(dataloader):
+        inputs, targets = load_batch(batch, args.device)
+        outputs = model(inputs, object_queries, pos, query_pos)
 
 
 if __name__ == '__main__':
