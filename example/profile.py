@@ -45,6 +45,8 @@ import torchvision.datasets
 import torchvision.models
 import torchvision.transforms as T
 
+from aquamarine.models import efficientformer_l1
+
 ######################################################################
 # Then prepare the input data. For this tutorial, we use the CIFAR10 dataset.
 # Transform it to the desired format and use DataLoader to load each batch.
@@ -61,24 +63,23 @@ train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=Tru
 # To run on GPU, move model and loss to GPU device.
 
 device = torch.device("cuda:0")
-model = torchvision.models.resnet18(pretrained=True)
-model = model.to(device=device, memory_format=torch.channels_last)
+model = efficientformer_l1()
+model = model.to(device)
 criterion = torch.nn.CrossEntropyLoss().cuda(device)
 optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 model.train()
-
 
 ######################################################################
 # Define the training step for each batch of input data.
 
 def train(data):
-    inputs, labels = data[0].to(device=device, memory_format=torch.channels_last), data[1].to(device=device)
+    inputs, labels = data[0].to(device=device), data[1].to(device=device)
     outputs = model(inputs)
     loss = criterion(outputs, labels)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
-
+    print(f'\rbatch proceeding: {step + 1:4d}/{len(train_loader)} - loss: {loss.item():.3f}', end='')
 
 ######################################################################
 # 2. Use profiler to record execution events
@@ -115,9 +116,8 @@ def train(data):
 
 with torch.profiler.profile(
         schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler('/mnt/runs/resnet18opt'),
+        on_trace_ready=torch.profiler.tensorboard_trace_handler('/mnt/runs/efficientformer-l1'),
         record_shapes=True,
-        profile_memory=True,
         with_stack=True
 ) as prof:
     for step, batch_data in enumerate(train_loader):
