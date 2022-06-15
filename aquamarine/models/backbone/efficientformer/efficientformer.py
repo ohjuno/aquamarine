@@ -3,7 +3,7 @@ from typing import Any, List, Type, Union
 import torch
 
 from torch import Tensor
-from torch.nn import Module, AdaptiveAvgPool2d, AvgPool2d, BatchNorm2d, Conv2d, \
+from torch.nn import Module, AdaptiveAvgPool1d, AvgPool2d, BatchNorm2d, Conv2d, \
     Dropout, GELU, Identity, LayerNorm, Linear, MultiheadAttention, Sequential
 
 
@@ -22,16 +22,17 @@ class MetaBlock4D(Module):
 
     expansion: int = 4
 
-    def __init__(self, embed_dim, kernel_size: int = 3, dropout: float = 0.):
+    def __init__(self, embed_dim, kernel_size: int = 3, dropout: float = 0., device=None, dtype=None):
+        factory_kwargs = dict(device=device, dtype=dtype)
         super(MetaBlock4D, self).__init__()
         self.token_mixer = PoolMixer(kernel_size=kernel_size)
         self.feedforward = Sequential(
-            Conv2d(embed_dim, embed_dim * self.expansion, kernel_size=1, stride=1, bias=False),
-            BatchNorm2d(embed_dim * self.expansion),
+            Conv2d(embed_dim, embed_dim * self.expansion, kernel_size=1, stride=1, bias=False, **factory_kwargs),
+            BatchNorm2d(embed_dim * self.expansion, **factory_kwargs),
             GELU(),
             Dropout(p=dropout),
-            Conv2d(embed_dim * self.expansion, embed_dim, kernel_size=1, stride=1, bias=False),
-            BatchNorm2d(embed_dim),
+            Conv2d(embed_dim * self.expansion, embed_dim, kernel_size=1, stride=1, bias=False, **factory_kwargs),
+            BatchNorm2d(embed_dim, **factory_kwargs),
             Dropout(p=dropout),
         )
 
@@ -47,14 +48,15 @@ class MetaBlock3D(Module):
 
     expansion: int = 4
 
-    def __init__(self, embed_dim, dropout: float = 0.):
+    def __init__(self, embed_dim, dropout: float = 0., device=None, dtype=None):
+        factory_kwargs = dict(device=device, dtype=dtype)
         super(MetaBlock3D, self).__init__()
-        self.token_mixer = MultiheadAttention(embed_dim, num_heads=8)
+        self.token_mixer = MultiheadAttention(embed_dim, num_heads=8,**factory_kwargs)
         self.feedforward = Sequential(
-            Linear(embed_dim, embed_dim * self.expansion),
+            Linear(embed_dim, embed_dim * self.expansion, **factory_kwargs),
             GELU(),
             Dropout(p=dropout),
-            Linear(embed_dim * self.expansion, embed_dim),
+            Linear(embed_dim * self.expansion, embed_dim, **factory_kwargs),
             Dropout(p=dropout),
         )
         self.norm1 = LayerNorm(embed_dim)
@@ -75,19 +77,22 @@ class EfficientFormer(Module):
             embed_dims: List[int],
             layers: List[int],
             num_classes: int = 1000,
+            device=None,
+            dtype=None,
     ) -> None:
+        factory_kwargs = dict(device=device, dtype=dtype)
         super(EfficientFormer, self).__init__()
-        self.conv1 = Conv2d(3, int(embed_dims[0] / 2), kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn1 = BatchNorm2d(int(embed_dims[0] / 2))
-        self.conv2 = Conv2d(int(embed_dims[0] / 2), embed_dims[0], kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn2 = BatchNorm2d(embed_dims[0])
-        self.stage1 = self._make_layer(MetaBlock4D, embed_dims[0], embed_dims[1], layers[0], stride=2)
-        self.stage2 = self._make_layer(MetaBlock4D, embed_dims[1], embed_dims[2], layers[1], stride=2)
-        self.stage3 = self._make_layer(MetaBlock4D, embed_dims[2], embed_dims[3], layers[2], stride=2)
-        self.stage4 = self._make_layer(MetaBlock4D, embed_dims[3], embed_dims[3], layers[3], stride=1)
-        self.stage5 = self._make_layer(MetaBlock3D, embed_dims[3], embed_dims[3], layers[4], stride=1)
-        self.avgpool = AdaptiveAvgPool2d((1, 1))
-        self.fc = Linear(embed_dims[3], num_classes)
+        self.conv1 = Conv2d(3, int(embed_dims[0] / 2), kernel_size=3, stride=2, padding=1, bias=False, **factory_kwargs)
+        self.bn1 = BatchNorm2d(int(embed_dims[0] / 2), **factory_kwargs)
+        self.conv2 = Conv2d(int(embed_dims[0] / 2), embed_dims[0], kernel_size=3, stride=2, padding=1, bias=False, **factory_kwargs)
+        self.bn2 = BatchNorm2d(embed_dims[0], **factory_kwargs)
+        self.stage1 = self._make_layer(MetaBlock4D, embed_dims[0], embed_dims[1], layers[0], stride=2, **factory_kwargs)
+        self.stage2 = self._make_layer(MetaBlock4D, embed_dims[1], embed_dims[2], layers[1], stride=2, **factory_kwargs)
+        self.stage3 = self._make_layer(MetaBlock4D, embed_dims[2], embed_dims[3], layers[2], stride=2, **factory_kwargs)
+        self.stage4 = self._make_layer(MetaBlock4D, embed_dims[3], embed_dims[3], layers[3], stride=1, **factory_kwargs)
+        self.stage5 = self._make_layer(MetaBlock3D, embed_dims[3], embed_dims[3], layers[4], stride=1, **factory_kwargs)
+        self.avgpool = AdaptiveAvgPool1d(1)
+        self.fc = Linear(embed_dims[3], num_classes, **factory_kwargs)
 
     @staticmethod
     def _make_layer(
@@ -96,18 +101,21 @@ class EfficientFormer(Module):
             next_planes: int,
             blocks: int,
             stride: int = 1,
+            device=None,
+            dtype=None,
     ) -> Sequential:
+        factory_kwargs = dict(device=device, dtype=dtype)
         layers = []
         for _ in range(blocks):
-            layers.append(blk(planes))
+            layers.append(blk(planes, **factory_kwargs))
 
         if len(layers) == 0:
             layers.append(Identity())
 
         if stride != 1:
             layers.append(Sequential(
-                Conv2d(planes, next_planes, kernel_size=3, stride=2, padding=1, bias=False),
-                BatchNorm2d(next_planes),
+                Conv2d(planes, next_planes, kernel_size=3, stride=2, padding=1, bias=False, **factory_kwargs),
+                BatchNorm2d(next_planes, **factory_kwargs),
             ))
 
         return Sequential(*layers)
@@ -122,13 +130,16 @@ class EfficientFormer(Module):
         x = self.stage2(x)
         x = self.stage3(x)
         x = self.stage4(x)  # stage 4 MB4D
-        bsz, c, h, w = x.shape
-        x = x.reshape(h * w, bsz, c)
-        x = self.stage5(x)  # stage 4 MB3D
-        x = x.reshape(bsz, c, h, w)
 
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
+        # reshape once
+        bsz, c, h, w = x.shape
+        x = x.reshape(h * w ,bsz, c)
+
+        x = self.stage5(x)  # stage 4 MB3D
+
+        # x = x.permute(1, 2, 0)
+        # x = self.avgpool(x).squeeze(dim=-1)
+        x = x.mean(dim=0)
         x = self.fc(x)
 
         return x
@@ -178,29 +189,21 @@ if __name__ == '__main__':
     import torchvision.models as models
     from torch.profiler import profile, record_function, ProfilerActivity
 
-    device = torch.device('cpu')
-
-    patches = torch.randn(1, 3, 224, 224)
-    # patches = patches.to(device)
+    patches = torch.randn(8, 3, 224, 224)
 
     efficient_former_l1 = efficientformer_l1()
-    # efficient_former.to(device)
     efficient_former_l1.eval()
 
     efficient_former_l3 = efficientformer_l3()
-    # efficient_former.to(device)
     efficient_former_l3.eval()
 
     efficient_former_l7 = efficientformer_l7()
-    # efficient_former.to(device)
     efficient_former_l7.eval()
 
     mobilenet_v2 = models.mobilenet_v2()
-    # mobilenet_v2.to(device)
     mobilenet_v2.eval()
 
     mobilenet_v3 = models.mobilenet_v3_small()
-    # mobilenet_v3.to(device)
     mobilenet_v3.eval()
 
     for _ in range(20):
