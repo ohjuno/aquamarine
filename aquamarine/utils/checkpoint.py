@@ -5,12 +5,10 @@ import os.path
 import numpy as np
 import torch
 
-from torch import Tensor
-
 
 class CKPT:
 
-    base_folder = 'ckpt'
+    base_folder = 'checkpoint'
 
     def __init__(
             self,
