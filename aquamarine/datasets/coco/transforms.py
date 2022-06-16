@@ -1,9 +1,8 @@
 from typing import Any, Dict, Optional, Tuple, Union
-
-import torch
 from PIL import Image
 
 import copy
+import torch
 import torchvision.transforms.functional as F
 
 import aquamarine.datasets.utils

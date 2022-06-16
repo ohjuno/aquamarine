@@ -1,17 +1,8 @@
 import torch
 
 
-def coco_collate_fn(batch):
-    inputs, targets = list(zip(*batch))
-    inputs = align_spatial_shape_with_paddings(inputs)
-    return inputs, targets
-
-
 def align_spatial_shape_to_square(tensor_shapes):
     shape = tensor_shapes[0]
-    # for sublist in tensor_shapes[1:]:
-    #     for idx, item in enumerate(sublist):
-    #         shape[idx] = max(shape[idx], item)
     long = max(shape)
     shape = [shape[0], long, long]
     return shape
@@ -24,3 +15,9 @@ def align_spatial_shape_with_paddings(tensors):
     for tensor, padded_tensor in zip(tensors, padded_tensors):
         padded_tensor[: tensor.shape[0], : tensor.shape[1], : tensor.shape[2]].copy_(tensor)
     return padded_tensors
+
+
+def coco_collate_fn(batch):
+    inputs, targets = list(zip(*batch))
+    inputs = align_spatial_shape_with_paddings(inputs)
+    return inputs, targets
