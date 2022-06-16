@@ -51,8 +51,8 @@ class HungarianLoss(Module):
         targets_bboxes = torch.cat([target['bboxes'][j] for target, (i, j) in zip(targets, indices)], dim=0)
         loss_bboxes = F.l1_loss(outputs_bboxes, targets_bboxes, reduction='none')
         loss_bboxes = loss_bboxes.sum() / num_bboxes
-        loss_geniou = 1 - torch.diag(generalized_box_iou(
-            box_cxcywh_to_xyxy(outputs_bboxes), box_cxcywh_to_xyxy(targets_bboxes)))
+        loss_geniou = generalized_box_iou(box_cxcywh_to_xyxy(outputs_bboxes), box_cxcywh_to_xyxy(targets_bboxes))
+        loss_geniou = 1 - torch.diag(loss_geniou)
         loss_geniou = loss_geniou.sum() / num_bboxes
         return {'loss_bboxes': loss_bboxes, 'loss_giou': loss_geniou}
 
