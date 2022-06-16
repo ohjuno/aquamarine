@@ -25,16 +25,12 @@ def update(
         device: Optional[Union[str, torch.device]] = None,
         non_blocking: bool = False,
 ) -> Callable:
-    r"""Return factory function that updates the model with single batch
 
-    Args:
-        ...
-    """
     def update_batch(batch: Sequence[Tensor]) -> Union[Any, Tuple[Tensor]]:
         model.train()
         criterion.train()
         inputs, targets = load_batch_fn(batch, device=device, non_blocking=non_blocking)
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         outputs = model(inputs)
         loss = criterion(outputs, targets)
         loss.backward()
@@ -54,16 +50,12 @@ def update_with_amp(
         device: Optional[Union[str, torch.device]] = None,
         non_blocking: bool = False,
 ) -> Callable:
-    r"""Return factory function that updates the model using ``torch.cuda.amp`` with single batch
 
-    Args:
-        ...
-    """
     def update_batch(batch: Sequence[Tensor]) -> Union[Any, Tuple[Tensor]]:
         model.train()
         criterion.train()
         inputs, targets = load_batch_fn(batch, device=device, non_blocking=non_blocking)
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         with autocast(enabled=True):
             outputs = model(inputs)
             loss = criterion(outputs, targets)
@@ -75,41 +67,36 @@ def update_with_amp(
     return update_batch
 
 
-def evaluate(
+@torch.no_grad()
+def run(
         model: Module,
         load_batch_fn: Callable = load_batch,
         output_format: Callable = lambda i, t, p: (p, t),
         device: Optional[Union[str, torch.device]] = None,
         non_blocking: bool = False,
 ) -> Callable:
-    r"""Return factory function that evaluates the performance of the model with single batch
 
-    Args:
-        ...
-    """
-    def evaluate_batch(batch: Sequence[Tensor]) -> Union[Any, Tuple[Tensor]]:
+    @torch.no_grad()
+    def run_batch(batch: Sequence[Tensor]) -> Union[Any, Tuple[Tensor]]:
         model.eval()
-        with torch.no_grad():
-            inputs, targets = load_batch_fn(batch, device=device, non_blocking=non_blocking)
-            outputs = model(inputs)
-            return output_format(inputs, targets, outputs)
+        inputs, targets = load_batch_fn(batch, device=device, non_blocking=non_blocking)
+        outputs = model(inputs)
+        return output_format(inputs, targets, outputs)
 
-    return evaluate_batch
+    return run_batch
 
 
-def evaluate_with_amp(
+@torch.no_grad()
+def run_with_amp(
         model: Module,
         load_batch_fn: Callable = load_batch,
         output_format: Callable = lambda i, t, p: (p, t),
         device: Optional[Union[str, torch.device]] = None,
         non_blocking: bool = False,
 ) -> Callable:
-    r"""Return factory function that evaluates the performance of the model using ``torch.cuda.amp`` with single batch
 
-    Args:
-        ...
-    """
-    def evaluate_batch(batch: Sequence[Tensor]) -> Union[Any, Tuple[Tensor]]:
+    @torch.no_grad()
+    def run_batch(batch: Sequence[Tensor]) -> Union[Any, Tuple[Tensor]]:
         model.eval()
         with torch.no_grad():
             inputs, targets = load_batch_fn(batch, device=device, non_blocking=non_blocking)
@@ -117,4 +104,4 @@ def evaluate_with_amp(
                 outputs = model(inputs)
             return output_format(inputs, targets, outputs)
 
-    return evaluate_batch
+    return run_batch
