@@ -15,8 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from aquamarine.datasets import COCODetection, COCODataLoader
 from aquamarine.models import DETR, DETRTransformer, HungarianMatcher
-from aquamarine.modules import HungarianLoss
-from aquamarine.optimizer import MADGRAD, CosineAnnealingWarmRestarts
+from aquamarine.modules import Accuracy, HungarianLoss
 from aquamarine.utils import CKPT
 
 
@@ -51,10 +50,9 @@ def get_parser():
 
     # experiments
     parser.add_argument('--device', default='cuda:0', type=str)
-    parser.add_argument('--epochs', default=10000, type=int)
-    parser.add_argument('--checkpoint', default='/mnt/runs/detr_r50_madgrad_cawr_bs_256_rs_224', type=str)
-    parser.add_argument('--tensorboard', default='/mnt/runs/detr_r50_madgrad_cawr_bs_256_rs_224', type=str)
-    parser.add_argument('--amp', default=True, type=bool)
+    parser.add_argument('--epochs', default=300, type=int)
+    parser.add_argument('--checkpoint', default=None, type=str)
+    parser.add_argument('--tensorboard', default=None, type=str)
 
     return parser
 
@@ -95,12 +93,13 @@ def main(args):
     pos = nn.Parameter(torch.empty((1, int((args.resolution / 32) ** 2), 512), **factory_kwargs))
     query_pos = nn.Parameter(torch.empty((1, args.num_queries, 512), **factory_kwargs))
 
-    # optimizer, criterion, scheduler and amp (automatic mixed precision)
-    optimizer = MADGRAD(model.parameters(), lr=args.lr)
+    # optimizer, criterion, scheduler
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     matcher = HungarianMatcher(lamb_labels=args.lamb_labels, lamb_bboxes=args.lamb_bboxes, lamb_geniou=args.lamb_geniou)
     weight_dict = {'loss_labels': args.lamb_labels, 'loss_bboxes': args.lamb_bboxes, 'loss_geniou': args.lamb_geniou}
-    criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, weight_dict=weight_dict, eos_coef=args.eos_coef, **factory_kwargs)
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=100, T_up=20, T_mult=1., lr_delta=0.5)
+    criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, weight_dict=weight_dict, eos_coef=args.eos_coef, reduction='none', **factory_kwargs)
+    evaluator = Accuracy(topk=(1, 5))
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50)
 
     # checkpoint & tensorboard
     state = {
@@ -109,18 +108,19 @@ def main(args):
         'criterion': criterion,
         'optimizer': optimizer,
     }
-    checkpoint = CKPT(args.checkpoint, state)
-    writer = SummaryWriter(args.tensorboard)
+    # checkpoint = CKPT(args.checkpoint, state)
+    # writer = SummaryWriter(args.tensorboard)
 
     # training loop
     for epoch in range(args.epochs):
-        train(trainloader, model, pos, query_pos, optimizer, criterion, epoch, writer, args)
-        score = valid(validloader, model, pos, query_pos, criterion, epoch, writer, args)
-        checkpoint.step(score)
+        # train(trainloader, model, pos, query_pos, optimizer, criterion, epoch, writer, args)
+        # score = valid(validloader, model, pos, query_pos, criterion, evaluator, epoch, writer, args)
+        score = valid(validloader, model, pos, query_pos, criterion, evaluator, epoch, args)
+        # checkpoint.step(score)
         scheduler.step()
 
     torch.cuda.empty_cache()
-    writer.close()
+    # writer.close()
     gc.collect()
 
 
@@ -157,56 +157,63 @@ def train(dataloader: Iterable, model: Module, pos: Tensor, query_pos: Tensor,
     print(
         f'\r'
         f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
-        f'average loss: {np.nanmean(losses):.3f}'
+        f'loss(total, mean): {np.nanmean(losses):.3f}'
     )
     writer.add_scalar('train / training loss (epoch)', np.nanmean(losses), epoch)
     torch.cuda.empty_cache()
     gc.collect()
 
 
-def valid(dataloader: Iterable, model: Module, pos: Tensor, query_pos: Tensor,
-          criterion: Module, epoch: int, writer:Any, args: Any) -> List[Any]:
+# def valid(dataloader: Iterable, model: Module, pos: Tensor, query_pos: Tensor, criterion,
+#           evaluator: Module, epoch: int, writer:Any, args: Any) -> List[Any]:
+def valid(dataloader: Iterable, model: Module, pos: Tensor, query_pos: Tensor, criterion,
+          evaluator: Module, epoch: int, args: Any) -> List[Any]:
     model.eval()
-    criterion.eval()
+    evaluator.eval()
+    labels = []
+    bboxes = []
+    geniou = []
     losses = []
     with torch.no_grad():
         for idx, batch in enumerate(dataloader):
             inputs, targets = load_batch(batch, args.device)
             object_queries = torch.zeros(inputs.shape[0], args.num_queries, 512, device=args.device)
             outputs = model(inputs, object_queries, pos, query_pos)
-            loss = criterion(outputs, targets)
-            losses.append(loss.item())
+            loss_d = criterion(outputs, targets)
+            acc1, acc5 = evaluator(torch.split(outputs, [args.num_classes + 1, 4], dim=-1)[0], targets['labels'])
+            loss_t = sum(loss_d[k] for k in loss_d.keys())
+            labels.append(loss_d['loss_labels'].item())
+            bboxes.append(loss_d['loss_bboxes'].item())
+            geniou.append(loss_d['loss_giou'].item())
+            losses.append(loss_t.item())
             print(
                 f'\r'
                 f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
                 f'batch[{idx + 1:{len(str(len(dataloader)))}d}/{len(dataloader)}] - '
-                f'loss(current batch): {loss.item():.3f} - '
-                f'loss(accumulated): {np.nanmean(losses):.3f}',
+                f'loss(labels): {loss_d["loss_labels"].item():.3f} - '
+                f'loss(bboxes): {loss_d["loss_bboxes"].item():.3f} - '
+                f'loss(generalized IoU): {loss_d["loss_giou"].item():.3f} - '
+                f'loss(total): {loss_t.item():.3f} - '
+                f'accuracy(acc1): {acc1:.2f} % - '
+                f'accuracy(acc5): {acc5:.2f} %',
                 end='',
             )
-            writer.add_scalar('valid / validation loss (batch)', loss.item(), epoch * len(dataloader) + idx)
+            # writer.add_scalar('valid / validation loss (labels)', loss_d['loss_labels'].item(), epoch * len(dataloader) + idx)
+            # writer.add_scalar('valid / validation loss (bboxes)', loss_d['loss_bboxes'].item(), epoch * len(dataloader) + idx)
+            # writer.add_scalar('valid / validation loss (geniou)', loss_d['loss_giou'].item(), epoch * len(dataloader) + idx)
+            # writer.add_scalar('valid / validation loss (total)', loss_t.item(), epoch * len(dataloader) + idx)
     print(
         f'\r'
         f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
-        f'average loss: {np.nanmean(losses):.3f}'
+        f'loss(labels): {np.nanmean(labels):.3f} - '
+        f'loss(bboxes): {np.nanmean(bboxes):.3f} - '
+        f'loss(generalized IoU): {np.nanmean(geniou):.3f} - '
+        f'loss(total, mean): {np.nanmean(losses):.3f}'
     )
-    writer.add_scalar('valid / validation loss (epoch)', np.nanmean(losses), epoch)
+    # writer.add_scalar('valid / validation loss (epoch)', np.nanmean(losses), epoch)
     torch.cuda.empty_cache()
     gc.collect()
     return losses
-
-
-@torch.no_grad()
-def evaluate(dataloader: Iterable, model: Module, object_queries: Tensor, pos:Tensor, query_pos: Tensor,
-             criterion: Module, post_processors:Any, args:Any):
-    model.eval()
-    criterion.eval()
-
-    iou_types = tuple(k for k in ('segm', 'bboxes') if k in post_processors.keys())
-
-    for idx, batch in enumerate(dataloader):
-        inputs, targets = load_batch(batch, args.device)
-        outputs = model(inputs, object_queries, pos, query_pos)
 
 
 if __name__ == '__main__':
