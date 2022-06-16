@@ -206,7 +206,7 @@ if __name__ == '__main__':
     mobilenet_v3 = models.mobilenet_v3_small()
     mobilenet_v3.eval()
 
-    for _ in range(20):
+    for _ in range(1000):
         efficient_former_l1(patches)
         efficient_former_l3(patches)
         efficient_former_l7(patches)
@@ -240,4 +240,4 @@ if __name__ == '__main__':
     print(p4.key_averages().table(sort_by='cpu_time_total', row_limit=1))
     print(p5.key_averages().table(sort_by='cpu_time_total', row_limit=1))
 
-    breakpoint()
+    # breakpoint()
