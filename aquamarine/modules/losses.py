@@ -10,13 +10,12 @@ from aquamarine.datasets.utils.ops import box_cxcywh_to_xyxy
 
 class HungarianLoss(Module):
 
-    def __init__(self, num_classes: int, matcher: Any, weight_dict: Dict, eos_coef: float,
+    def __init__(self, num_classes: int, matcher: Any, eos_coef: float,
                  reduction: str = 'sum', device=None, dtype=None) -> None:
         factory_kwargs = dict(device=device, dtype=dtype)
         super(HungarianLoss, self).__init__()
         self.num_classes = num_classes
         self.matcher = matcher
-        self.weight_dict = weight_dict
         self.eos_coef = eos_coef
         self.reduction = reduction
 

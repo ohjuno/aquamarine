@@ -1,22 +1,13 @@
-from typing import Any, Iterable, List
-
-import gc
 import argparse
-import numpy as np
 import torch
 import torch.nn as nn
 import torchvision.models as models
 import aquamarine.datasets.coco.transforms as transforms
 
-from torch import Tensor
-from torch.nn import Module
-from torch.optim import Optimizer
-from torch.utils.tensorboard import SummaryWriter
-
-from aquamarine.datasets import COCODetection, COCODataLoader
+from torch.utils.data import DataLoader
+from aquamarine.datasets import COCODetection, coco_collate_fn
+from aquamarine.engine import update, run
 from aquamarine.models import DETR, DETRTransformer, HungarianMatcher
-from aquamarine.modules import Accuracy, HungarianLoss
-from aquamarine.utils import CKPT
 
 
 def get_parser():
@@ -68,8 +59,8 @@ def main(args):
     ])
     trainset = COCODetection(root=args.train_root, annFile=args.train_annFile, transforms=transform)
     validset = COCODetection(root=args.valid_root, annFile=args.valid_annFile, transforms=transform)
-    trainloader = COCODataLoader(trainset, args.batch_size, True, num_workers=args.num_worker, pin_memory=True)
-    validloader = COCODataLoader(validset, args.batch_size, False, num_workers=args.num_worker, pin_memory=True)
+    trainloader = DataLoader(trainset, args.batch_size, True, num_workers=args.num_worker, pin_memory=True, collate_fn=coco_collate_fn)
+    validloader = DataLoader(validset, args.batch_size, False, num_workers=args.num_worker, pin_memory=True, collate_fn=coco_collate_fn)
 
     # model
     backbone = nn.Sequential(*list(models.resnet50().children()))[:-2]
@@ -94,34 +85,13 @@ def main(args):
     query_pos = nn.Parameter(torch.empty((1, args.num_queries, 512), **factory_kwargs))
 
     # optimizer, criterion, scheduler
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     matcher = HungarianMatcher(lamb_labels=args.lamb_labels, lamb_bboxes=args.lamb_bboxes, lamb_geniou=args.lamb_geniou)
-    weight_dict = {'loss_labels': args.lamb_labels, 'loss_bboxes': args.lamb_bboxes, 'loss_geniou': args.lamb_geniou}
-    criterion = HungarianLoss(num_classes=args.num_classes, matcher=matcher, weight_dict=weight_dict, eos_coef=args.eos_coef, reduction='none', **factory_kwargs)
-    evaluator = Accuracy(topk=(1, 5))
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50)
 
-    # checkpoint & tensorboard
-    state = {
-        'model': model,
-        'matcher': matcher,
-        'criterion': criterion,
-        'optimizer': optimizer,
-    }
-    # checkpoint = CKPT(args.checkpoint, state)
-    # writer = SummaryWriter(args.tensorboard)
+    valid_process_fn = run(model, load_batch, device=args.device)
 
     # training loop
     for epoch in range(args.epochs):
-        # train(trainloader, model, pos, query_pos, optimizer, criterion, epoch, writer, args)
-        # score = valid(validloader, model, pos, query_pos, criterion, evaluator, epoch, writer, args)
-        score = valid(validloader, model, pos, query_pos, criterion, evaluator, epoch, args)
-        # checkpoint.step(score)
-        scheduler.step()
-
-    torch.cuda.empty_cache()
-    # writer.close()
-    gc.collect()
+        valid(validloader, valid_process_fn)
 
 
 def load_batch(batch, device, non_blocking: bool = False):
@@ -131,91 +101,11 @@ def load_batch(batch, device, non_blocking: bool = False):
     return inputs, targets
 
 
-def train(dataloader: Iterable, model: Module, pos: Tensor, query_pos: Tensor,
-          optimizer: Optimizer, criterion: Module, epoch: int, writer: Any, args: Any) -> None:
-    model.train()
-    criterion.train()
-    losses = []
+def valid(dataloader, process_fn):
     for idx, batch in enumerate(dataloader):
-        inputs, targets = load_batch(batch, args.device)
-        object_queries = torch.zeros(inputs.shape[0], args.num_queries, 512, device=args.device)
-        outputs = model(inputs, object_queries, pos, query_pos)
-        optimizer.zero_grad(set_to_none=True)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        optimizer.step()
-        losses.append(loss.item())
-        print(
-            f'\r'
-            f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
-            f'batch[{idx + 1:{len(str(len(dataloader)))}d}/{len(dataloader)}] - '
-            f'loss(current batch): {loss.item():.3f} - '
-            f'loss(accumulated): {np.nanmean(losses):.3f}',
-            end='',
-        )
-        writer.add_scalar('train / training loss (batch)', loss.item(), epoch * len(dataloader) + idx)
-    print(
-        f'\r'
-        f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
-        f'loss(total, mean): {np.nanmean(losses):.3f}'
-    )
-    writer.add_scalar('train / training loss (epoch)', np.nanmean(losses), epoch)
-    torch.cuda.empty_cache()
-    gc.collect()
-
-
-# def valid(dataloader: Iterable, model: Module, pos: Tensor, query_pos: Tensor, criterion,
-#           evaluator: Module, epoch: int, writer:Any, args: Any) -> List[Any]:
-def valid(dataloader: Iterable, model: Module, pos: Tensor, query_pos: Tensor, criterion,
-          evaluator: Module, epoch: int, args: Any) -> List[Any]:
-    model.eval()
-    evaluator.eval()
-    labels = []
-    bboxes = []
-    geniou = []
-    losses = []
-    with torch.no_grad():
-        for idx, batch in enumerate(dataloader):
-            inputs, targets = load_batch(batch, args.device)
-            object_queries = torch.zeros(inputs.shape[0], args.num_queries, 512, device=args.device)
-            outputs = model(inputs, object_queries, pos, query_pos)
-            loss_d = criterion(outputs, targets)
-            acc1, acc5 = evaluator(torch.split(outputs, [args.num_classes + 1, 4], dim=-1)[0], targets['labels'])
-            loss_t = sum(loss_d[k] for k in loss_d.keys())
-            labels.append(loss_d['loss_labels'].item())
-            bboxes.append(loss_d['loss_bboxes'].item())
-            geniou.append(loss_d['loss_giou'].item())
-            losses.append(loss_t.item())
-            print(
-                f'\r'
-                f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
-                f'batch[{idx + 1:{len(str(len(dataloader)))}d}/{len(dataloader)}] - '
-                f'loss(labels): {loss_d["loss_labels"].item():.3f} - '
-                f'loss(bboxes): {loss_d["loss_bboxes"].item():.3f} - '
-                f'loss(generalized IoU): {loss_d["loss_giou"].item():.3f} - '
-                f'loss(total): {loss_t.item():.3f} - '
-                f'accuracy(acc1): {acc1:.2f} % - '
-                f'accuracy(acc5): {acc5:.2f} %',
-                end='',
-            )
-            # writer.add_scalar('valid / validation loss (labels)', loss_d['loss_labels'].item(), epoch * len(dataloader) + idx)
-            # writer.add_scalar('valid / validation loss (bboxes)', loss_d['loss_bboxes'].item(), epoch * len(dataloader) + idx)
-            # writer.add_scalar('valid / validation loss (geniou)', loss_d['loss_giou'].item(), epoch * len(dataloader) + idx)
-            # writer.add_scalar('valid / validation loss (total)', loss_t.item(), epoch * len(dataloader) + idx)
-    print(
-        f'\r'
-        f'Epoch[{epoch + 1:{len(str(args.epochs))}d}/{args.epochs}] - '
-        f'loss(labels): {np.nanmean(labels):.3f} - '
-        f'loss(bboxes): {np.nanmean(bboxes):.3f} - '
-        f'loss(generalized IoU): {np.nanmean(geniou):.3f} - '
-        f'loss(total, mean): {np.nanmean(losses):.3f}'
-    )
-    # writer.add_scalar('valid / validation loss (epoch)', np.nanmean(losses), epoch)
-    torch.cuda.empty_cache()
-    gc.collect()
-    return losses
+        inputs, targets, outputs = process_fn(batch)
+        breakpoint()
 
 
 if __name__ == '__main__':
-    config = get_parser().parse_args()
-    main(config)
+    main(get_parser().parse_args())

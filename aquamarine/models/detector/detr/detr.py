@@ -42,8 +42,7 @@ class DETR(Module):
         src = feature.contiguous().view(bsz, h * w, c)
 
         output = self.transformer(src, object_queries, pos, query_pos)
-        output = self.mlp_class(output), self.mlp_boxes(output).sigmoid()
-        output = torch.cat(output, dim=-1)
+        output = {'labels': self.mlp_class(output), 'bboxes': self.mlp_boxes(output).sigmoid()}
         return output
 
 

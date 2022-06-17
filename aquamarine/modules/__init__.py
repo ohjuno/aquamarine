@@ -1,4 +1,4 @@
-from aquamarine.modules.evaluators import Accuracy
+from aquamarine.modules.evaluators import DetectionClassAccuracy
 from aquamarine.modules.losses import HungarianLoss
 
 
